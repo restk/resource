@@ -102,6 +102,8 @@ type Field struct {
 // 503 Service Unavailable - This indicates that something unexpected happened on server side (It can be anything like server overload, some parts of the system failed, etc.).
 type Resource[T any] struct {
 	name         string
+	singularName string // name in singular form, if name is 'keys' then this would 'key'. This should only be used for doc purposes
+	pluralName   string // name in plural form, if name is 'user', then this would be 'users'. This should only be used for doc purposes
 	primaryField string
 	validator    func(objectToValidate T) bool
 	// hasAccess    func(c router.Context, resource string, action AccessAction) bool
@@ -152,6 +154,9 @@ type Resource[T any] struct {
 	disableUpdate bool
 	disableDelete bool
 	disableList   bool
+
+	//
+
 }
 
 func NewResource[T any](name string, primaryField string) *Resource[T] {
