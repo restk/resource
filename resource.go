@@ -499,6 +499,18 @@ func parseFieldFromParam(db *gorm.DB, param string, resource interface{}, field 
 	return columnForWhereClause, parsedValue, nil
 }
 
+// Tx returns a transaction from the resource or panics
+// TODO: when implementing the generic model interface, we should have ways for the user to determine where the tx comes from instead of hard pulling it from the context
+func (r *Resource[T]) tx(ctx router.Context) *gorm.DB {
+	val := ctx.Value("gorm_tx") // TODO: allow user to specify the context key to get the transaction from
+	if tx, ok := val.(*gorm.DB); ok {
+		return tx
+	}
+
+	// not being able to find a transaction inside the context is a critical error and everything should stop
+	panic("unable to find tx in context")
+}
+
 // GenerateRESTAPI generates REST API endpoints for a resource. This also handles RBAC and makes sure the calling user has permission for an action on a resource.
 //
 // GET /resources                  -> returns an array of resources (with a max amount per page) and filters
@@ -507,7 +519,7 @@ func parseFieldFromParam(db *gorm.DB, param string, resource interface{}, field 
 // PUT /resources    -> creates or updates a list of resources (with allowable save fields)
 // DELETE /resource  -> deletes a single resource
 // DELETE /resources -> deletes a list of resources
-func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI *openapi.Builder) error {
+func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAPI *openapi.Builder) error {
 	// generate column names
 	// TODO: add a storage interface instead of using gorm directly so Resource can be used for any other storage medium
 	groupPath := ""
@@ -523,7 +535,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 	var resourceTypeForDoc *T
 	var resource T
 
-	columnByField, err := generateColumnByField(db, resource)
+	columnByField, err := generateColumnByField(dbb, resource)
 	if err != nil {
 		return err
 	}
@@ -551,6 +563,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 				}
 			}
 
+			tx := r.tx(c)
 			queryParams := c.QueryParams()
 
 			var page int
@@ -590,13 +603,13 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 				limitOffsetEnabled = true
 			}
 
-			table := db.Model(r.table)
+			table := tx.Model(r.table)
 
 			// if this is a grouped resource, we add the primary field of the resource this belongs to
 			if r.belongsTo != nil {
 
 				param := c.Param(r.belongsTo.PrimaryFieldURLParam())
-				columnForWhereClause, parsedValue, err := parseFieldFromParam(db, param, resourceTypeForDoc, r.belongsToField)
+				columnForWhereClause, parsedValue, err := parseFieldFromParam(tx, param, resourceTypeForDoc, r.belongsToField)
 				if err != nil {
 					InternalServerError(c, err)
 					return
@@ -625,7 +638,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 					continue
 				}
 
-				column, parsedValue, err := parseFieldFromParam(db, queryParams.Get(param), resourceTypeForDoc, field)
+				column, parsedValue, err := parseFieldFromParam(tx, queryParams.Get(param), resourceTypeForDoc, field)
 				if err != nil {
 					continue
 				}
@@ -688,6 +701,8 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 					return
 				}
 			}
+
+			tx := r.tx(c)
 			whereClauseQuery := ""
 			whereClauseArgs := make([]interface{}, 0)
 
@@ -697,7 +712,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 
 			if r.belongsTo != nil {
 				param := c.Param(r.belongsTo.PrimaryFieldURLParam())
-				columnForWhereClause, parsedValue, err := parseFieldFromParam(db, param, resourceTypeForDoc, r.belongsToField)
+				columnForWhereClause, parsedValue, err := parseFieldFromParam(tx, param, resourceTypeForDoc, r.belongsToField)
 				if err != nil {
 					InternalServerError(c, err)
 					return
@@ -708,7 +723,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 			}
 
 			var resource T
-			query := db.Model(r.table).Where(whereClauseQuery, whereClauseArgs...)
+			query := tx.Model(r.table).Where(whereClauseQuery, whereClauseArgs...)
 			if len(r.preload) > 0 {
 				for _, preload := range r.preload {
 					query.Preload(preload)
@@ -769,6 +784,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 				}
 			}
 
+			tx := r.tx(c)
 			var resource *T
 			err := c.ReadJSON(&resource)
 			if err != nil {
@@ -786,7 +802,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 			}
 
 			// we can ignore each field that is not allowed to be updated via (db.Model(r.table).Omit("field_1")).Omit("field_2")..etc
-			if result := db.Model(r.table).Create(&resource); result.Error != nil {
+			if result := tx.Model(r.table).Create(&resource); result.Error != nil {
 				InternalServerError(c, err)
 				return
 			}
@@ -860,6 +876,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 				}
 			}
 
+			tx := r.tx(c)
 			whereClauseQuery := ""
 			whereClauseArgs := make([]interface{}, 0)
 
@@ -869,7 +886,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 
 			if r.belongsTo != nil {
 				param := c.Param(r.belongsTo.PrimaryFieldURLParam())
-				columnForWhereClause, parsedValue, err := parseFieldFromParam(db, param, resourceTypeForDoc, r.belongsToField)
+				columnForWhereClause, parsedValue, err := parseFieldFromParam(tx, param, resourceTypeForDoc, r.belongsToField)
 				if err != nil {
 					InternalServerError(c, err)
 					return
@@ -879,7 +896,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 				whereClauseArgs = append(whereClauseArgs, parsedValue)
 			}
 
-			if result := db.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).Save(&resource); result.Error != nil {
+			if result := tx.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).Save(&resource); result.Error != nil {
 				InternalServerError(c, err)
 				return
 			}
@@ -950,6 +967,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 				}
 			}
 
+			tx := r.tx(c)
 			whereClauseQuery := ""
 			whereClauseArgs := make([]interface{}, 0)
 
@@ -959,7 +977,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 
 			if r.belongsTo != nil {
 				param := c.Param(r.belongsTo.PrimaryFieldURLParam())
-				columnForWhereClause, parsedValue, err := parseFieldFromParam(db, param, resourceTypeForDoc, r.belongsToField)
+				columnForWhereClause, parsedValue, err := parseFieldFromParam(tx, param, resourceTypeForDoc, r.belongsToField)
 				if err != nil {
 					InternalServerError(c, err)
 					return
@@ -968,7 +986,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 				whereClauseQuery = fmt.Sprintf("%v = ? AND %v = ?", r.primaryField, columnForWhereClause)
 				whereClauseArgs = append(whereClauseArgs, parsedValue)
 			}
-			if result := db.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).Updates(&resource); result.Error != nil {
+			if result := tx.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).Updates(&resource); result.Error != nil {
 				InternalServerError(c, err)
 				return
 			}
@@ -1013,6 +1031,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 				}
 			}
 
+			tx := r.tx(c)
 			whereClauseQuery := ""
 			whereClauseArgs := make([]interface{}, 0)
 
@@ -1022,7 +1041,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 
 			if r.belongsTo != nil {
 				param := c.Param(r.belongsTo.PrimaryFieldURLParam())
-				columnForWhereClause, parsedValue, err := parseFieldFromParam(db, param, resourceTypeForDoc, r.belongsToField)
+				columnForWhereClause, parsedValue, err := parseFieldFromParam(tx, param, resourceTypeForDoc, r.belongsToField)
 				if err != nil {
 					InternalServerError(c, err)
 					return
@@ -1034,7 +1053,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 
 			// first load the resource and verify ownership
 			var resource *T
-			if result := db.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).First(&resource); result.Error != nil {
+			if result := tx.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).First(&resource); result.Error != nil {
 				if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 					ResourceNotFound(c)
 					return
@@ -1059,7 +1078,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 			}
 
 			var deletedResource *T
-			if err := db.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).Delete(&deletedResource).Error; err != nil {
+			if err := tx.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).Delete(&deletedResource).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					ResourceNotFound(c)
 					return
