@@ -155,8 +155,9 @@ type Resource[T any] struct {
 	disableDelete bool
 	disableList   bool
 
-	//
+	fieldsToRedact []string
 
+	//
 }
 
 func NewResource[T any](name string, primaryField string) *Resource[T] {
@@ -678,6 +679,10 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				return
 			}
 
+			for i := range resources {
+				r.redactFields(&resources[i])
+			}
+
 			c.WriteJSON(http.StatusOK, resources)
 		})
 	}
@@ -920,7 +925,6 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			} else {
 				c.WriteJSON(http.StatusOK, resource)
 			}
-
 		})
 	}
 
@@ -1159,4 +1163,26 @@ func (r *Resource[T]) DisableDelete() {
 // DisableList disables listing on this resource
 func (r *Resource[T]) DisableList() {
 	r.disableList = true
+}
+
+// FieldsToRedact stores an array of fields to be redacted when serving /resources list routes
+func (r *Resource[T]) FieldsToRedact(fieldsToRedact []string) {
+	r.fieldsToRedact = fieldsToRedact
+}
+
+// refactFields loops through r.fieldsToRedact and sets any matching fields to zero value
+func (r *Resource[T]) redactFields(obj *T) {
+	v := reflect.ValueOf(obj).Elem()
+	t := v.Type()
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		fieldName := field.Name
+
+		for _, redactField := range r.fieldsToRedact {
+			if fieldName == redactField {
+				v.Field(i).Set(reflect.Zero(field.Type))
+			}
+		}
+	}
 }
