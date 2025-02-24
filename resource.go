@@ -176,19 +176,20 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		table:        table,
 		generateDocs: true,
 		// hasAccess:            DefaultHasAccess[T],
-		hasOwnership:         DefaultHasOwnership[T],
-		beforeSave:           make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
-		afterSave:            make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
-		beforeDelete:         make([]func(c router.Context, obj *T) error, 0),
-		afterDelete:          make([]func(c router.Context, obj *T) error, 0),
-		beforeResponse:       make(map[access.Permission]func(c router.Context, obj *T) (interface{}, error), 0),
-		queryOperatorByField: make(map[string]FieldQueryOperation, 0),
-		columnByField:        make(map[string]string, 0),
-		preload:              make([]string, 0),
-		fields:               make([]*Field, 0),
-		pageSize:             10,
-		maxPageSize:          250,
-		maxLimit:             250,
+		hasOwnership:              DefaultHasOwnership[T],
+		beforeSave:                make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
+		afterSave:                 make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
+		beforeDelete:              make([]func(c router.Context, obj *T) error, 0),
+		afterDelete:               make([]func(c router.Context, obj *T) error, 0),
+		beforeResponse:            make(map[access.Permission]func(c router.Context, obj *T) (interface{}, error), 0),
+		queryOperatorByField:      make(map[string]FieldQueryOperation, 0),
+		columnByField:             make(map[string]string, 0),
+		preload:                   make([]string, 0),
+		fields:                    make([]*Field, 0),
+		ignoredFieldsByPermission: make(map[access.Permission]map[string]*FieldIgnoreRule, 0),
+		pageSize:                  10,
+		maxPageSize:               250,
+		maxLimit:                  250,
 	}
 
 	typeOf := reflect.TypeOf(table)
@@ -387,32 +388,6 @@ func (r *Resource[T]) isFieldNameValid(name string) bool {
 	return false
 }
 
-// IsFieldIgnored returns true if the field is ignored
-func (r *Resource[T]) IsFieldIgnored(ctx context.Context, name string, permission access.Permission, rbac access.RBAC) bool {
-	if _, ok := r.ignoredFieldsByPermission[permission]; !ok {
-		return false
-	}
-	ignoredFields := r.ignoredFieldsByPermission[permission]
-	ignoreRule, ok := ignoredFields[name]
-	if !ok {
-		return false
-	}
-
-	if rbac != nil {
-		if len(ignoreRule.UnlessRoles) > 0 {
-			for _, role := range ignoreRule.UnlessRoles {
-				if rbac.HasRole(ctx, role) {
-					return false
-				}
-			}
-		}
-
-		return true
-	} else {
-		return true
-	}
-}
-
 // IgnoreAllFields ignores all fields.
 func (r *Resource[T]) IgnoreAllFields() *Resource[T] {
 	for _, permission := range access.PermissionAll {
@@ -425,36 +400,63 @@ func (r *Resource[T]) IgnoreAllFields() *Resource[T] {
 }
 
 // AllowField will allow a field for a specific permission. By default Fields are allowed, call IgnoreAllFields() first.
-func (r *Resource[T]) AllowField(name string, permissions []access.Permission) *Resource[T] {
+func (r *Resource[T]) AllowFields(fields []string, permissions []access.Permission) *Resource[T] {
+	for _, field := range fields {
+		r.AllowField(field, permissions)
+	}
+
+	return r
+}
+
+// AllowField will allow a field for a specific permission. By default Fields are allowed, call IgnoreAllFields() first.
+func (r *Resource[T]) AllowField(field string, permissions []access.Permission) *Resource[T] {
 	for _, permission := range permissions {
 		if ignoredFields, ok := r.ignoredFieldsByPermission[permission]; ok {
-			delete(ignoredFields, name)
+			delete(ignoredFields, field)
 		}
 	}
 
 	return r
 }
 
+// IgnoreFields will ignore a list of fields for a specific permission. You can ignore a field for: access.PermissionRead, access.PermissionWrite, access.PermissionList, access.PermissionCreate
+func (r *Resource[T]) IgnoreFields(fields []string, accessMethod []access.Permission) *Resource[T] {
+	for _, field := range fields {
+		r.IgnoreFieldUnlessRole(field, accessMethod, []string{})
+	}
+
+	return r
+}
+
 // IgnoreField will ignore a field for a specific permission. You can ignore a field for: access.PermissionRead, access.PermissionWrite, access.PermissionList, access.PermissionCreate
-func (r *Resource[T]) IgnoreField(name string, accessMethod []access.Permission) *Resource[T] {
-	return r.IgnoreFieldUnlessRole(name, accessMethod, []string{})
+func (r *Resource[T]) IgnoreField(field string, accessMethod []access.Permission) *Resource[T] {
+	return r.IgnoreFieldUnlessRole(field, accessMethod, []string{})
+}
+
+// see: IgnoreFieldUnlessRole
+func (r *Resource[T]) IgnoreFieldsUnlessRole(fields []string, accessMethod []access.Permission, roles []string) *Resource[T] {
+	for _, field := range fields {
+		r.IgnoreFieldUnlessRole(field, accessMethod, roles)
+	}
+
+	return r
 }
 
 // IgnoreFieldUnlessRole will ignore the field for all operations unless the requester has the roles provided. This can allow specific fields, such as join fields, to be ignored
 // but they can still be updated by admins in tools.
 //
 // This requires rbac to be enabled, else this will do nothing
-func (r *Resource[T]) IgnoreFieldUnlessRole(name string, accessMethod []access.Permission, roles []string) *Resource[T] {
+func (r *Resource[T]) IgnoreFieldUnlessRole(field string, accessMethod []access.Permission, roles []string) *Resource[T] {
 	for _, permission := range access.PermissionAll {
 		if _, ok := r.ignoredFieldsByPermission[permission]; !ok {
 			r.ignoredFieldsByPermission[permission] = make(map[string]*FieldIgnoreRule, 0)
 		}
 		ignoredFields := r.ignoredFieldsByPermission[permission]
-		if _, ok := ignoredFields[name]; ok {
+		if _, ok := ignoredFields[field]; ok {
 			return r
 		}
 
-		ignoredFields[name] = &FieldIgnoreRule{
+		ignoredFields[field] = &FieldIgnoreRule{
 			UnlessRoles: roles,
 		}
 	}
@@ -583,6 +585,7 @@ func (r *Resource[T]) omitIgnoredFields(ctx context.Context, permission access.P
 				for _, role := range field.UnlessRoles {
 					if r.rbac.HasRole(ctx, role) {
 						hasException = true
+						break
 					}
 				}
 			}
@@ -1245,6 +1248,24 @@ func (r *Resource[T]) PATCH(f func(c router.Context)) {
 // DELETE overrides the DELETE method with f
 func (r *Resource[T]) DELETE(f func(c router.Context)) {
 	r.delete = f
+}
+
+// Disable disables a list of access methods
+func (r *Resource[T]) Disable(permissions []access.Permission) {
+	for _, permission := range permissions {
+		switch permission {
+		case access.PermissionCreate:
+			r.DisableCreate()
+		case access.PermissionRead:
+			r.DisableRead()
+		case access.PermissionUpdate:
+			r.DisableUpdate()
+		case access.PermissionDelete:
+			r.DisableDelete()
+		case access.PermissionList:
+			r.DisableList()
+		}
+	}
 }
 
 // DisableCreate disables creation on this resource
