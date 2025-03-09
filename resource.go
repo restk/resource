@@ -34,6 +34,27 @@ var (
 	FieldQueryOperationLessThanEquals    FieldQueryOperation = "<="
 )
 
+// UserError is a custom error type that means this error will be shown to the user. The user gets a JSON containing
+// the code and the message instead of an InternalServerError.
+type UserError struct {
+	Code    int
+	Message string
+}
+
+func (e *UserError) Error() string {
+	return fmt.Sprintf("user error (code: %v, message: %v)", e.Code, e.Message)
+}
+
+// NewUserError is a custom error type that means this message will be sent to the user instead of an
+// InternalServerError (default behaviour.) You should return a UserError in hooks such as BeforeSave / AfterSave / etc
+// when you want the user to receive the error
+func NewUserError(code int, message string) error {
+	return &UserError{
+		Code:    code,
+		Message: message,
+	}
+}
+
 // S is used to easily craft JSON responses, see ResourceNotFound
 type S map[string]interface{}
 
@@ -45,6 +66,10 @@ var (
 		fmt.Println("internal server error", err)
 		c.WriteJSON(http.StatusInternalServerError, S{"code": 500, "message": "Internal Server Error"})
 	}
+	CustomUserError = func(c router.Context, userError *UserError) {
+		c.WriteJSON(http.StatusInternalServerError, S{"code": userError.Code, "message": userError.Message})
+	}
+
 	BadRequest = func(c router.Context) {
 		c.WriteJSON(http.StatusBadRequest, S{"code": 500, "message": "Invalid request"})
 	}
@@ -852,6 +877,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if f, ok := r.beforeResponse[access.PermissionRead]; ok {
 				customResponse, err := f(c, &resource)
 				if err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -894,6 +925,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.beforeSave[access.PermissionCreate]; ok {
 				for _, beforeSaveFunc := range r.beforeSave[access.PermissionCreate] {
 					if err = beforeSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -915,6 +952,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.afterSave[access.PermissionCreate]; ok {
 				for _, afterSaveFunc := range r.afterSave[access.PermissionCreate] {
 					if err = afterSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -924,6 +967,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if f, ok := r.beforeResponse[access.PermissionCreate]; ok {
 				customResponse, err := f(c, resource)
 				if err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -973,6 +1022,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.beforeSave[access.PermissionUpdate]; ok {
 				for _, beforeSaveFunc := range r.beforeSave[access.PermissionUpdate] {
 					if err = beforeSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -1010,6 +1065,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.afterSave[access.PermissionUpdate]; ok {
 				for _, afterSaveFunc := range r.afterSave[access.PermissionCreate] {
 					if err = afterSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -1019,6 +1080,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if f, ok := r.beforeResponse[access.PermissionUpdate]; ok {
 				customResponse, err := f(c, resource)
 				if err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -1070,6 +1137,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.beforeSave[access.PermissionUpdate]; ok {
 				for _, beforeSaveFunc := range r.beforeSave[access.PermissionUpdate] {
 					if err = beforeSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -1106,6 +1179,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.afterSave[access.PermissionUpdate]; ok {
 				for _, afterSaveFunc := range r.afterSave[access.PermissionCreate] {
 					if err = afterSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -1115,6 +1194,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if f, ok := r.beforeResponse[access.PermissionUpdate]; ok {
 				customResponse, err := f(c, resource)
 				if err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -1186,6 +1271,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			for _, beforeDeleteFunc := range r.beforeDelete {
 				if err = beforeDeleteFunc(c, resource); err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -1204,6 +1295,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			for _, afterDeleteFunc := range r.afterDelete {
 				if err = afterDeleteFunc(c, resource); err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -1212,6 +1309,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if f, ok := r.beforeResponse[access.PermissionDelete]; ok {
 				customResponse, err := f(c, resource)
 				if err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
