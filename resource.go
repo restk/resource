@@ -134,6 +134,7 @@ type FieldIgnoreRule struct {
 type Resource[T any] struct {
 	name         string
 	pluralName   string // name in plural form, if name is 'user', then this would be 'users'. This should only be used for doc purposes
+	tags         []string
 	primaryField string
 	validator    func(objectToValidate T) bool
 	// hasAccess    func(c router.Context, resource string, action AccessAction) bool
@@ -193,14 +194,14 @@ type Resource[T any] struct {
 func NewResource[T any](name string, primaryField string) *Resource[T] {
 	var table T
 
-	pluralizedName := pluralizeClient.Pluralize(name, 1, false)
+	pluralizedName := pluralizeClient.Pluralize(name, 0, false)
 	r := &Resource[T]{
-		name:         name,
-		pluralName:   pluralizedName,
-		primaryField: primaryField,
-		table:        table,
-		generateDocs: true,
-		// hasAccess:            DefaultHasAccess[T],
+		name:                      name,
+		pluralName:                pluralizedName,
+		primaryField:              primaryField,
+		table:                     table,
+		tags:                      []string{strings.ToTitle(pluralizedName)},
+		generateDocs:              true,
 		hasOwnership:              DefaultHasOwnership[T],
 		beforeSave:                make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
 		afterSave:                 make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
@@ -215,6 +216,7 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		pageSize:                  10,
 		maxPageSize:               250,
 		maxLimit:                  250,
+		// hasAccess:            DefaultHasAccess[T],
 	}
 
 	typeOf := reflect.TypeOf(table)
@@ -242,6 +244,16 @@ func (r *Resource[T]) Name() string {
 // Plural is the plural name for this resource.
 func (r *Resource[T]) Plural(pluralName string) {
 	r.pluralName = pluralName
+}
+
+// ADdTag adds a tag
+func (r *Resource[T]) AddTag(tag string) {
+	r.tags = append(r.tags, tag)
+}
+
+// Tags replaces all tags
+func (r *Resource[T]) Tags(tags []string) {
+	r.tags = tags
 }
 
 // DisableDocs disables API doc generation for this specific resource.
@@ -339,6 +351,12 @@ func (r *Resource[T]) SetHasAccess(f func(c router.Context, resource string, act
 func (r *Resource[T]) BelongsTo(resource ResourceInterface, field string) {
 	r.belongsTo = resource
 	r.belongsToField = field
+
+	// first tag is automatically generated when a resource is created, if this resource belongs to another
+	// resource we add it to the belongs to resource tag instead.
+	if len(r.tags) > 0 {
+		r.tags[0] = strings.ToTitle(resource.Name())
+	}
 }
 
 // SetOwnsResource sets the function which checks if the resource is owned by the caller making the request.
@@ -663,9 +681,9 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "list" + r.name,
 				Method:      "GET",
 				Path:        listPath,
-				Tags:        []string{r.pluralName},
-			}).Summary("Gets a list of " + r.name).
-				Description("Get a list of " + r.name + " filtering via query params. This endpoint also supports pagination")
+				Tags:        r.tags,
+			}).Summary("Gets a list of " + r.pluralName).
+				Description("Get a list of " + r.pluralName + " filtering via query params. This endpoint also supports pagination")
 
 			listDoc.Request().QueryParam("id", r.name).Description("id of the resource")
 		}
@@ -805,7 +823,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "get" + r.name,
 				Method:      "GET",
 				Path:        getPath,
-				Tags:        []string{r.pluralName},
+				Tags:        r.tags,
 			}).Summary("Returns a single " + r.name).
 				Description("Returns a single " + r.name + " by the primary id.")
 
@@ -902,7 +920,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "create" + r.name,
 				Method:      "PUT",
 				Path:        createPath,
-				Tags:        []string{r.pluralName},
+				Tags:        r.tags,
 			}).Summary("Creates a new " + r.name).
 				Description("Creates a new " + r.name + ". If the resource already exist, this returns an error.")
 
@@ -993,7 +1011,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "update" + r.name,
 				Method:      "PUT",
 				Path:        updatePath,
-				Tags:        []string{r.pluralName},
+				Tags:        r.tags,
 			}).Summary("Updates a single " + r.name).
 				Description("Updates a single " + r.name + ".")
 
@@ -1109,7 +1127,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "patch" + r.name,
 				Method:      "PATCH",
 				Path:        patchPath,
-				Tags:        []string{r.pluralName},
+				Tags:        r.tags,
 			}).Summary("Patches a single " + r.name).
 				Description("Patches a single " + r.name + ".")
 
@@ -1222,7 +1240,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "delete" + r.name,
 				Method:      "DELETE",
 				Path:        deletePath,
-				Tags:        []string{r.pluralName},
+				Tags:        r.tags,
 			}).Summary("Deletes a single " + r.name).
 				Description("Deletes a single " + r.name + ".")
 			deleteDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
