@@ -13,11 +13,14 @@ import (
 	"github.com/restk/resource/access"
 	"github.com/restk/resource/pkg/pluralize"
 	"github.com/restk/resource/router"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"gorm.io/gorm"
 )
 
 var (
 	pluralizeClient *pluralize.Client
+	caser           = cases.Title(language.English)
 )
 
 func init() {
@@ -80,6 +83,7 @@ var (
 
 type ResourceInterface interface {
 	Name() string
+	PluralName() string
 	PrimaryField() string
 	PrimaryFieldURLParam() string
 }
@@ -200,7 +204,7 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		pluralName:                pluralizedName,
 		primaryField:              primaryField,
 		table:                     table,
-		tags:                      []string{strings.ToTitle(pluralizedName)},
+		tags:                      []string{caser.String(pluralizedName)},
 		generateDocs:              true,
 		hasOwnership:              DefaultHasOwnership[T],
 		beforeSave:                make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
@@ -239,6 +243,11 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 // Name returns the resource name.
 func (r *Resource[T]) Name() string {
 	return r.name
+}
+
+// PluralName returns the plural name.
+func (r *Resource[T]) PluralName() string {
+	return r.pluralName
 }
 
 // Plural is the plural name for this resource.
@@ -355,7 +364,7 @@ func (r *Resource[T]) BelongsTo(resource ResourceInterface, field string) {
 	// first tag is automatically generated when a resource is created, if this resource belongs to another
 	// resource we add it to the belongs to resource tag instead.
 	if len(r.tags) > 0 {
-		r.tags[0] = strings.ToTitle(resource.Name())
+		r.tags[0] = caser.String(resource.PluralName())
 	}
 }
 
