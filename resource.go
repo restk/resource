@@ -663,6 +663,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "list" + r.name,
 				Method:      "GET",
 				Path:        listPath,
+				Tags:        []string{r.pluralName},
 			}).Summary("Gets a list of " + r.name).
 				Description("Get a list of " + r.name + " filtering via query params. This endpoint also supports pagination")
 
@@ -804,6 +805,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "get" + r.name,
 				Method:      "GET",
 				Path:        getPath,
+				Tags:        []string{r.pluralName},
 			}).Summary("Returns a single " + r.name).
 				Description("Returns a single " + r.name + " by the primary id.")
 
@@ -900,6 +902,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "create" + r.name,
 				Method:      "PUT",
 				Path:        createPath,
+				Tags:        []string{r.pluralName},
 			}).Summary("Creates a new " + r.name).
 				Description("Creates a new " + r.name + ". If the resource already exist, this returns an error.")
 
@@ -990,6 +993,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "update" + r.name,
 				Method:      "PUT",
 				Path:        updatePath,
+				Tags:        []string{r.pluralName},
 			}).Summary("Updates a single " + r.name).
 				Description("Updates a single " + r.name + ".")
 
@@ -1105,6 +1109,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "patch" + r.name,
 				Method:      "PATCH",
 				Path:        patchPath,
+				Tags:        []string{r.pluralName},
 			}).Summary("Patches a single " + r.name).
 				Description("Patches a single " + r.name + ".")
 
@@ -1217,6 +1222,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				OperationID: "delete" + r.name,
 				Method:      "DELETE",
 				Path:        deletePath,
+				Tags:        []string{r.pluralName},
 			}).Summary("Deletes a single " + r.name).
 				Description("Deletes a single " + r.name + ".")
 			deleteDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
