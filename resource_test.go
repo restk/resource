@@ -70,7 +70,10 @@ func TestBasic(t *testing.T) {
 	// authRouter := ginrouter.NewRouter(authGroup)
 
 	user := NewResource[User]("user", "id")
-	user.IgnoreFields([]string{"IgnoredField", "IgnoredField2"}, access.PermissionAll)
+	user.IgnoreFields([]string{"IgnoredField", "IgnoredField2"}, []access.Permission{
+		access.PermissionCreate,
+		access.PermissionUpdate,
+	})
 	user.EnableRBAC(&StubRBAC{})
 	// user.Preload("Organization", "Role.Permissions")
 	// user.BeforeSave(access.PermissionCreate, func(c resourcerouter.Context, user *User) error {
@@ -92,12 +95,17 @@ func TestBasic(t *testing.T) {
 			method:     http.MethodGet,
 			path:       "/user",
 			wantStatus: http.StatusOK,
+			wantStruct: []User{
+				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "IGNORE"},
+				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "IGNORE"},
+			},
 		},
 		{
 			name:       "GET /users/:id (detail)",
 			method:     http.MethodGet,
 			path:       "/user/1",
 			wantStatus: http.StatusOK,
+			wantStruct: &User{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "IGNORE"},
 		},
 		{
 			name:   "PUT /users (create)",
@@ -166,11 +174,11 @@ func TestBasic(t *testing.T) {
 					return
 				}
 
-				if !reflect.DeepEqual(gotVal, tt.wantStruct) {
+				if !reflect.DeepEqual(deref(gotVal), deref(tt.wantStruct)) {
 					t.Errorf(
 						"\nResponse mismatch\nGot:  %#v\nWant: %#v\nRaw Body: %s",
-						gotVal,
-						tt.wantStruct,
+						deref(gotVal),
+						deref(tt.wantStruct),
 						w.Body.String(),
 					)
 				}
@@ -187,4 +195,12 @@ func newValueOfType(x any) interface{} {
 		return reflect.New(t.Elem()).Interface()
 	}
 	return reflect.New(t).Interface()
+}
+
+func deref(x any) any {
+	rv := reflect.ValueOf(x)
+	if rv.Kind() == reflect.Ptr && !rv.IsNil() {
+		return rv.Elem().Interface()
+	}
+	return x
 }
