@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -36,7 +37,15 @@ type UserAPIKey struct {
 type StubRBAC struct{}
 
 func (f *StubRBAC) HasPermission(ctx context.Context, resource string, permission access.Permission) bool {
-	return true
+	if permissions, ok := ctx.Value("permissions").([]string); ok {
+		for _, userPermission := range permissions {
+			if userPermission == resource+":"+string(permission) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func (f *StubRBAC) HasRole(ctx context.Context, role string) bool {
@@ -71,6 +80,9 @@ func TestBasic(t *testing.T) {
 		if role := ctx.GetHeader("Role"); role != "" {
 			ctx.Set("role", role)
 		}
+		if permissions := ctx.GetHeader("Permissions"); permissions != "" {
+			ctx.Set("permissions", strings.Split(permissions, ","))
+		}
 
 		ctx.Next()
 	})
@@ -95,14 +107,23 @@ func TestBasic(t *testing.T) {
 
 	user.GenerateRestAPI(unauthRouter, db, openAPI)
 
+	userPermissions := []string{
+		"user:create",
+		"user:read",
+		"user:update",
+		"user:delete",
+		"user:list",
+	}
+
 	tests := []struct {
-		name       string
-		method     string
-		path       string
-		role       string
-		body       any
-		wantStatus int
-		wantStruct any
+		name        string
+		method      string
+		path        string
+		role        string
+		permissions []string
+		body        any
+		wantStatus  int
+		wantStruct  any
 	}{
 		{
 			name:       "GET /users (list)",
@@ -113,24 +134,27 @@ func TestBasic(t *testing.T) {
 				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
 				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
 			},
+			permissions: userPermissions,
 		},
 		{
 			name:       "GET /users (list with admin role)",
 			method:     http.MethodGet,
 			path:       "/user",
 			wantStatus: http.StatusOK,
-			role:       "Admin",
 			wantStruct: []User{
 				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"},
 				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"},
 			},
+			role:        "Admin",
+			permissions: userPermissions,
 		},
 		{
-			name:       "GET /users/:id (detail)",
-			method:     http.MethodGet,
-			path:       "/user/1",
-			wantStatus: http.StatusOK,
-			wantStruct: &User{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
+			name:        "GET /users/:id (detail)",
+			method:      http.MethodGet,
+			path:        "/user/1",
+			wantStatus:  http.StatusOK,
+			wantStruct:  &User{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
+			permissions: userPermissions,
 		},
 		{
 			name:   "PUT /users (create)",
@@ -145,7 +169,8 @@ func TestBasic(t *testing.T) {
 				IgnoredField2:          "THIS ALSO SHOULD NOT SET",
 				IgnoredFieldUnlessRole: "THIS SHOULD NOT BE SET",
 			},
-			wantStatus: http.StatusOK,
+			wantStatus:  http.StatusOK,
+			permissions: userPermissions,
 		},
 		{
 			name:       "created user should not allow updating ignored field",
@@ -161,6 +186,7 @@ func TestBasic(t *testing.T) {
 				IgnoredField2:          "",
 				IgnoredFieldUnlessRole: "",
 			},
+			permissions: userPermissions,
 		},
 		{
 			name:   "PUT /users (create as admin)",
@@ -176,7 +202,8 @@ func TestBasic(t *testing.T) {
 				IgnoredField2:          "THIS ALSO SHOULD NOT SET",
 				IgnoredFieldUnlessRole: "THIS SHOULD BE SET",
 			},
-			wantStatus: http.StatusOK,
+			wantStatus:  http.StatusOK,
+			permissions: userPermissions,
 		},
 		{
 			name:       "created user if admin should allow updating ignored fields",
@@ -193,12 +220,71 @@ func TestBasic(t *testing.T) {
 				IgnoredField2:          "",
 				IgnoredFieldUnlessRole: "THIS SHOULD BE SET",
 			},
+			permissions: userPermissions,
 		},
 		{
-			name:       "GET /users/:id (should return 404 for non existing user)",
+			name:        "GET /users/:id (should return 404 for non existing user)",
+			method:      http.MethodGet,
+			path:        "/user/5",
+			wantStatus:  http.StatusNotFound,
+			permissions: userPermissions,
+		},
+		{
+			name:       "GET /users/:id (should return 407 Forbidden without permissions)",
 			method:     http.MethodGet,
-			path:       "/user/5",
-			wantStatus: http.StatusNotFound,
+			path:       "/user/4",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:   "PUT /users/ (should return 407 Forbidden without permissions)",
+			method: http.MethodPut,
+			path:   "/user",
+			body: &User{
+				ID:                     5,
+				Name:                   "George",
+				Organization:           "OrgC",
+				Role:                   "User",
+				IgnoredField:           "",
+				IgnoredField2:          "",
+				IgnoredFieldUnlessRole: "",
+			},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:   "PUT /users/4 (should return 407 Forbidden without permissions)",
+			method: http.MethodPut,
+			path:   "/user/4",
+			body: &User{
+				ID:                     4,
+				Name:                   "George",
+				Organization:           "OrgC",
+				Role:                   "User",
+				IgnoredField:           "",
+				IgnoredField2:          "",
+				IgnoredFieldUnlessRole: "",
+			},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:   "PATCH /users/4 (should return 407 Forbidden without permissions)",
+			method: http.MethodPatch,
+			path:   "/user/4",
+			body: &User{
+				ID:                     4,
+				Name:                   "George",
+				Organization:           "OrgC",
+				Role:                   "User",
+				IgnoredField:           "",
+				IgnoredField2:          "",
+				IgnoredFieldUnlessRole: "",
+			},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "DELETE /users/4 (should return 407 Forbidden without permissions)",
+			method:     http.MethodDelete,
+			path:       "/user/4",
+			wantStatus: http.StatusForbidden,
 		},
 	}
 	for _, tt := range tests {
@@ -221,6 +307,9 @@ func TestBasic(t *testing.T) {
 
 			if tt.role != "" {
 				req.Header.Set("Role", tt.role)
+			}
+			if len(tt.permissions) > 0 {
+				req.Header.Set("Permissions", strings.Join(tt.permissions, ","))
 			}
 
 			w := httptest.NewRecorder()
