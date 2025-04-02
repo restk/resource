@@ -18,12 +18,13 @@ import (
 )
 
 type User struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	Organization  string `json:"organization"`
-	Role          string `json:"role"`
-	IgnoredField  string `json:"ignoredField"`
-	IgnoredField2 string `json:"ignoredField2"`
+	ID                     int64  `json:"id"`
+	Name                   string `json:"name"`
+	Organization           string `json:"organization"`
+	Role                   string `json:"role"`
+	IgnoredField           string `json:"ignoredField"`
+	IgnoredField2          string `json:"ignoredField2"`
+	IgnoredFieldUnlessRole string `json:"ignoredFieldUnlessRole"`
 }
 
 type UserAPIKey struct {
@@ -39,7 +40,13 @@ func (f *StubRBAC) HasPermission(ctx context.Context, resource string, permissio
 }
 
 func (f *StubRBAC) HasRole(ctx context.Context, role string) bool {
-	return true
+	if userRole, ok := ctx.Value("role").(string); ok {
+		if userRole != "" {
+			return userRole == role
+		}
+	}
+
+	return false
 }
 
 // TestBasic runs a basic test
@@ -55,12 +62,16 @@ func TestBasic(t *testing.T) {
 		t.Fatalf("Failed to migrate: %v", err)
 	}
 
-	db.Create(&User{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "IGNORE"})
-	db.Create(&User{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "IGNORE"})
+	db.Create(&User{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"})
+	db.Create(&User{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"})
 
 	router := gin.Default()
 	router.Use(func(ctx *gin.Context) {
 		ctx.Set("gorm_tx", db)
+		if role := ctx.GetHeader("Role"); role != "" {
+			ctx.Set("role", role)
+		}
+
 		ctx.Next()
 	})
 	unauthGroup := router.Group("/")
@@ -74,6 +85,8 @@ func TestBasic(t *testing.T) {
 		access.PermissionCreate,
 		access.PermissionUpdate,
 	})
+	user.IgnoreFieldsUnlessRole([]string{"IgnoredFieldUnlessRole"}, access.PermissionAll, []string{"Admin"})
+
 	user.EnableRBAC(&StubRBAC{})
 	// user.Preload("Organization", "Role.Permissions")
 	// user.BeforeSave(access.PermissionCreate, func(c resourcerouter.Context, user *User) error {
@@ -86,6 +99,7 @@ func TestBasic(t *testing.T) {
 		name       string
 		method     string
 		path       string
+		role       string
 		body       any
 		wantStatus int
 		wantStruct any
@@ -96,8 +110,19 @@ func TestBasic(t *testing.T) {
 			path:       "/user",
 			wantStatus: http.StatusOK,
 			wantStruct: []User{
-				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "IGNORE"},
-				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "IGNORE"},
+				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
+				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
+			},
+		},
+		{
+			name:       "GET /users (list with admin role)",
+			method:     http.MethodGet,
+			path:       "/user",
+			wantStatus: http.StatusOK,
+			role:       "Admin",
+			wantStruct: []User{
+				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"},
+				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"},
 			},
 		},
 		{
@@ -105,19 +130,20 @@ func TestBasic(t *testing.T) {
 			method:     http.MethodGet,
 			path:       "/user/1",
 			wantStatus: http.StatusOK,
-			wantStruct: &User{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "IGNORE"},
+			wantStruct: &User{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
 		},
 		{
 			name:   "PUT /users (create)",
 			method: http.MethodPut,
 			path:   "/user",
 			body: &User{
-				ID:            3,
-				Name:          "George",
-				Organization:  "OrgC",
-				Role:          "User",
-				IgnoredField:  "THIS SHOULD NOT SET",
-				IgnoredField2: "THIS ALSO SHOULD NOT SET",
+				ID:                     3,
+				Name:                   "George",
+				Organization:           "OrgC",
+				Role:                   "User",
+				IgnoredField:           "THIS SHOULD NOT SET",
+				IgnoredField2:          "THIS ALSO SHOULD NOT SET",
+				IgnoredFieldUnlessRole: "THIS SHOULD NOT BE SET",
 			},
 			wantStatus: http.StatusOK,
 		},
@@ -127,18 +153,51 @@ func TestBasic(t *testing.T) {
 			path:       "/user/3",
 			wantStatus: http.StatusOK,
 			wantStruct: &User{
-				ID:            3,
-				Name:          "George",
-				Organization:  "OrgC",
-				Role:          "User",
-				IgnoredField:  "",
-				IgnoredField2: "",
+				ID:                     3,
+				Name:                   "George",
+				Organization:           "OrgC",
+				Role:                   "User",
+				IgnoredField:           "",
+				IgnoredField2:          "",
+				IgnoredFieldUnlessRole: "",
+			},
+		},
+		{
+			name:   "PUT /users (create as admin)",
+			method: http.MethodPut,
+			path:   "/user",
+			role:   "Admin",
+			body: &User{
+				ID:                     4,
+				Name:                   "George",
+				Organization:           "OrgC",
+				Role:                   "User",
+				IgnoredField:           "THIS SHOULD NOT SET",
+				IgnoredField2:          "THIS ALSO SHOULD NOT SET",
+				IgnoredFieldUnlessRole: "THIS SHOULD BE SET",
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "created user if admin should allow updating ignored fields",
+			method:     http.MethodGet,
+			path:       "/user/4",
+			role:       "Admin",
+			wantStatus: http.StatusOK,
+			wantStruct: &User{
+				ID:                     4,
+				Name:                   "George",
+				Organization:           "OrgC",
+				Role:                   "User",
+				IgnoredField:           "",
+				IgnoredField2:          "",
+				IgnoredFieldUnlessRole: "THIS SHOULD BE SET",
 			},
 		},
 		{
 			name:       "GET /users/:id (should return 404 for non existing user)",
 			method:     http.MethodGet,
-			path:       "/user/4",
+			path:       "/user/5",
 			wantStatus: http.StatusNotFound,
 		},
 	}
@@ -159,6 +218,10 @@ func TestBasic(t *testing.T) {
 				t.Fatalf("Failed to create request: %v", err)
 			}
 			req.Header.Set("Content-Type", "application/json")
+
+			if tt.role != "" {
+				req.Header.Set("Role", tt.role)
+			}
 
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
