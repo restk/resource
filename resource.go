@@ -442,10 +442,8 @@ func (r *Resource[T]) isFieldNameValid(name string) bool {
 
 // IgnoreAllFields ignores all fields.
 func (r *Resource[T]) IgnoreAllFields() *Resource[T] {
-	for _, permission := range access.PermissionAll {
-		for _, field := range r.fields {
-			r.IgnoreField(field.Name, []access.Permission{permission})
-		}
+	for _, field := range r.fields {
+		r.IgnoreField(field.Name, access.PermissionAll)
 	}
 
 	return r
@@ -499,7 +497,7 @@ func (r *Resource[T]) IgnoreFieldsUnlessRole(fields []string, accessMethod []acc
 //
 // This requires rbac to be enabled, else this will do nothing
 func (r *Resource[T]) IgnoreFieldUnlessRole(field string, accessMethod []access.Permission, roles []string) *Resource[T] {
-	for _, permission := range access.PermissionAll {
+	for _, permission := range accessMethod {
 		if _, ok := r.ignoredFieldsByPermission[permission]; !ok {
 			r.ignoredFieldsByPermission[permission] = make(map[string]*FieldIgnoreRule, 0)
 		}
