@@ -18,11 +18,12 @@ import (
 )
 
 type User struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	Organization string `json:"organization"`
-	Role         string `json:"role"`
-	IgnoredField string `json:"ignoredField"`
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Organization  string `json:"organization"`
+	Role          string `json:"role"`
+	IgnoredField  string `json:"ignoredField"`
+	IgnoredField2 string `json:"ignoredField2"`
 }
 
 type UserAPIKey struct {
@@ -69,7 +70,8 @@ func TestBasic(t *testing.T) {
 	// authRouter := ginrouter.NewRouter(authGroup)
 
 	user := NewResource[User]("user", "id")
-	user.IgnoreFields([]string{"IgnoredField"}, access.PermissionAll)
+	user.IgnoreFields([]string{"IgnoredField", "IgnoredField2"}, access.PermissionAll)
+	user.EnableRBAC(&StubRBAC{})
 	// user.Preload("Organization", "Role.Permissions")
 	// user.BeforeSave(access.PermissionCreate, func(c resourcerouter.Context, user *User) error {
 	//
@@ -102,11 +104,12 @@ func TestBasic(t *testing.T) {
 			method: http.MethodPut,
 			path:   "/user",
 			body: &User{
-				ID:           3,
-				Name:         "George",
-				Organization: "OrgC",
-				Role:         "User",
-				IgnoredField: "THIS SHOULD NOT UPDATE",
+				ID:            3,
+				Name:          "George",
+				Organization:  "OrgC",
+				Role:          "User",
+				IgnoredField:  "THIS SHOULD NOT SET",
+				IgnoredField2: "THIS ALSO SHOULD NOT SET",
 			},
 			wantStatus: http.StatusOK,
 		},
@@ -116,11 +119,12 @@ func TestBasic(t *testing.T) {
 			path:       "/user/3",
 			wantStatus: http.StatusOK,
 			wantStruct: &User{
-				ID:           3,
-				Name:         "George",
-				Organization: "OrgC",
-				Role:         "User",
-				IgnoredField: "",
+				ID:            3,
+				Name:          "George",
+				Organization:  "OrgC",
+				Role:          "User",
+				IgnoredField:  "",
+				IgnoredField2: "",
 			},
 		},
 		{
