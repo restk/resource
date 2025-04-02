@@ -2,10 +2,11 @@ package resource
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,16 @@ type UserAPIKey struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
 	Key  string `json:"key"`
+}
+
+type StubRBAC struct{}
+
+func (f *StubRBAC) HasPermission(ctx context.Context, resource string, permission access.Permission) bool {
+	return true
+}
+
+func (f *StubRBAC) HasRole(ctx context.Context, role string) bool {
+	return true
 }
 
 // TestBasic runs a basic test
@@ -72,6 +83,7 @@ func TestBasic(t *testing.T) {
 		path       string
 		body       any
 		wantStatus int
+		wantStruct any
 	}{
 		{
 			name:       "GET /users (list)",
@@ -99,10 +111,17 @@ func TestBasic(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "GET /users/:id (created user)",
+			name:       "created user should not allow updating ignored field",
 			method:     http.MethodGet,
 			path:       "/user/3",
 			wantStatus: http.StatusOK,
+			wantStruct: &User{
+				ID:           3,
+				Name:         "George",
+				Organization: "OrgC",
+				Role:         "User",
+				IgnoredField: "",
+			},
 		},
 		{
 			name:       "GET /users/:id (should return 404 for non existing user)",
@@ -132,12 +151,36 @@ func TestBasic(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
-			fmt.Println(string(w.Body.Bytes()))
-
 			if w.Code != tt.wantStatus {
 				t.Errorf("Wanted status %d, got %d", tt.wantStatus, w.Code)
 			}
+
+			if tt.wantStruct != nil {
+				gotVal := newValueOfType(tt.wantStruct)
+				if err := json.Unmarshal(w.Body.Bytes(), gotVal); err != nil {
+					t.Errorf("Failed to unmarshal response: %v\nResponse Body: %s", err, w.Body.String())
+					return
+				}
+
+				if !reflect.DeepEqual(gotVal, tt.wantStruct) {
+					t.Errorf(
+						"\nResponse mismatch\nGot:  %#v\nWant: %#v\nRaw Body: %s",
+						gotVal,
+						tt.wantStruct,
+						w.Body.String(),
+					)
+				}
+			}
+
 		})
 	}
 
+}
+
+func newValueOfType(x any) interface{} {
+	t := reflect.TypeOf(x)
+	if t.Kind() == reflect.Ptr {
+		return reflect.New(t.Elem()).Interface()
+	}
+	return reflect.New(t).Interface()
 }
