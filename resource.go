@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/restk/openapi"
@@ -606,6 +607,17 @@ func parseFieldFromParam(db *gorm.DB, param string, resource interface{}, field 
 		parsedValue = parsedIntValue
 	case reflect.String:
 		parsedValue = param
+	case reflect.Struct:
+		// If it's time.Time, parse the string into a time.Time
+		if gormField.StructField.Type == reflect.TypeOf(time.Time{}) {
+			parsedTime, err := time.Parse(time.RFC3339, param)
+			if err != nil {
+				return "", nil, errors.Wrapf(err, "failed to parse time param")
+			}
+			parsedValue = parsedTime
+		} else {
+			return "", nil, errors.Errorf("struct type not supported")
+		}
 	default:
 		// unhandled type
 		return "", nil, errors.Errorf("type not supported, if you are a developer, you can add a new type")
@@ -786,6 +798,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 				column, parsedValue, err := parseFieldFromParam(tx, queryParams.Get(param), resourceTypeForDoc, field)
 				if err != nil {
+					InternalServerError(c, err)
 					continue
 				}
 

@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -31,13 +32,15 @@ type Test struct {
 }
 
 type user struct {
-	ID                     int64  `json:"id"`
-	Name                   string `json:"name"`
-	Organization           string `json:"organization"`
-	Role                   string `json:"role"`
-	IgnoredField           string `json:"ignoredField"`
-	IgnoredField2          string `json:"ignoredField2"`
-	IgnoredFieldUnlessRole string `json:"ignoredFieldUnlessRole"`
+	ID                     int64     `json:"id"`
+	Name                   string    `json:"name"`
+	Organization           string    `json:"organization"`
+	Role                   string    `json:"role"`
+	IgnoredField           string    `json:"ignoredField"`
+	IgnoredField2          string    `json:"ignoredField2"`
+	IgnoredFieldUnlessRole string    `json:"ignoredFieldUnlessRole"`
+	Age                    int       `json:"age"`       // for testing >=
+	CreatedAt              time.Time `json:"createdAt"` // for testing <=
 }
 
 type userAPIKey struct {
@@ -79,8 +82,18 @@ func setupTestEnv(t *testing.T) (*gin.Engine, *gorm.DB, []string) {
 		t.Fatalf("Failed to migrate: %v", err)
 	}
 
-	db.Create(&user{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"})
-	db.Create(&user{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"})
+	db.Create(&user{
+		ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin",
+		IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C",
+		Age:       30,
+		CreatedAt: time.Date(2025, 01, 01, 0, 0, 0, 0, time.UTC),
+	})
+	db.Create(&user{
+		ID: 2, Name: "Bar", Organization: "OrgB", Role: "User",
+		IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C",
+		Age:       18,
+		CreatedAt: time.Date(2023, 01, 01, 0, 0, 0, 0, time.UTC),
+	})
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -106,6 +119,9 @@ func setupTestEnv(t *testing.T) (*gin.Engine, *gorm.DB, []string) {
 	})
 	userResource.IgnoreFieldsUnlessRole([]string{"IgnoredFieldUnlessRole"}, access.PermissionAll, []string{"Admin"})
 	userResource.EnableRBAC(&stubRBAC{})
+	userResource.SetFieldQueryOperation("Name", FieldQueryOperationLike)                // so `?name=xyz` uses LIKE
+	userResource.SetFieldQueryOperation("Age", FieldQueryOperationGreaterThanEquals)    // so `?age=21` uses >=
+	userResource.SetFieldQueryOperation("CreatedAt", FieldQueryOperationLessThanEquals) // so `?createdAt=` uses <=
 
 	if err := userResource.GenerateRestAPI(r, db, openAPI); err != nil {
 		t.Fatalf("Failed to generate REST API for user resource: %v", err)
@@ -125,22 +141,26 @@ func setupTestEnv(t *testing.T) (*gin.Engine, *gorm.DB, []string) {
 func TestListUsers(t *testing.T) {
 	router, db, userPermissions := setupTestEnv(t)
 
-	db.Create(&user{ID: 100, Name: "bob", Organization: "ex", Role: "User"})
-	db.Create(&user{ID: 101, Name: "bob", Organization: "ex2", Role: "User"})
-	db.Create(&user{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin"})
+	db.Create(&user{ID: 100, Name: "bob", Age: 21, Organization: "ex", Role: "User", CreatedAt: time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC)})
+	db.Create(&user{ID: 101, Name: "bob", Age: 25, Organization: "ex2", Role: "User", CreatedAt: time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC)})
+	db.Create(&user{ID: 102, Name: "charlie", Age: 40, Organization: "ex", Role: "Admin", CreatedAt: time.Date(2026, 01, 02, 0, 0, 0, 0, time.UTC)})
 
 	tests := []*Test{
 		{
+			// By default, "IgnoredField" and "IgnoredField2" are not ignored for read => IDs 1 & 2 have "A","B"
+			// "IgnoredFieldUnlessRole" is hidden if not Admin
 			name:       "GET /users - normal (no role => IgnoredFieldUnlessRole is blank)",
 			method:     http.MethodGet,
 			path:       "/users",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
-				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
-				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
-				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
-				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
-				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				// ID=1 & ID=2 from setup, ID=100..102 from above
+				// We'll specify all fields, including Age/CreatedAt:
+				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "", Age: 30, CreatedAt: time.Date(2025, 01, 01, 0, 0, 0, 0, time.UTC)},
+				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "", Age: 18, CreatedAt: time.Date(2023, 01, 01, 0, 0, 0, 0, time.UTC)},
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 21, CreatedAt: time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC)},
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 25, CreatedAt: time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC)},
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 40, CreatedAt: time.Date(2026, 01, 02, 0, 0, 0, 0, time.UTC)},
 			},
 			permissions: userPermissions,
 		},
@@ -151,22 +171,24 @@ func TestListUsers(t *testing.T) {
 			role:       "Admin",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
-				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"},
-				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"},
-				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
-				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
-				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				// Only difference is IDs 1 & 2 show "C" in IgnoredFieldUnlessRole
+				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C", Age: 30, CreatedAt: time.Date(2025, 01, 01, 0, 0, 0, 0, time.UTC)},
+				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C", Age: 18, CreatedAt: time.Date(2023, 01, 01, 0, 0, 0, 0, time.UTC)},
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 21, CreatedAt: time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC)},
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 25, CreatedAt: time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC)},
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 40, CreatedAt: time.Date(2026, 01, 02, 0, 0, 0, 0, time.UTC)},
 			},
 			permissions: userPermissions,
 		},
 		{
+			// By default, "Name" is now LIKE, but "bob" with no wildcard is effectively "bob" => an exact match
 			name:       "GET /users?name=bob => returns ID=100,101 only",
 			method:     http.MethodGet,
 			path:       "/users?name=bob",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
-				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
-				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 21, CreatedAt: time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC)},
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 25, CreatedAt: time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC)},
 			},
 			permissions: userPermissions,
 		},
@@ -176,7 +198,7 @@ func TestListUsers(t *testing.T) {
 			path:       "/users?name=charlie",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
-				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 40, CreatedAt: time.Date(2026, 01, 02, 0, 0, 0, 0, time.UTC)},
 			},
 			permissions: userPermissions,
 		},
@@ -186,8 +208,8 @@ func TestListUsers(t *testing.T) {
 			path:       "/users?organization=ex",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
-				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
-				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 21, CreatedAt: time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC)},
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 40, CreatedAt: time.Date(2026, 01, 02, 0, 0, 0, 0, time.UTC)},
 			},
 			permissions: userPermissions,
 		},
@@ -197,7 +219,7 @@ func TestListUsers(t *testing.T) {
 			path:       "/users?organization=ex2",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
-				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 25, CreatedAt: time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC)},
 			},
 			permissions: userPermissions,
 		},
@@ -207,17 +229,65 @@ func TestListUsers(t *testing.T) {
 			path:       "/users?id=102",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
-				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 40, CreatedAt: time.Date(2026, 01, 02, 0, 0, 0, 0, time.UTC)},
 			},
 			permissions: userPermissions,
 		},
 		{
+			// Combining queries => name=bob AND organization=ex => only ID=100
 			name:       "GET /users?name=bob&organization=ex => returns ID=100 only",
 			method:     http.MethodGet,
 			path:       "/users?name=bob&organization=ex",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
-				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 21, CreatedAt: time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC)},
+			},
+			permissions: userPermissions,
+		},
+		{
+			name:       "GET /users?name=%bob% => should find ID=100 & 101 (both have 'bob' in name)",
+			method:     http.MethodGet,
+			path:       "/users?name=%25bob%25",
+			wantStatus: http.StatusOK,
+			wantStruct: []user{
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 21, CreatedAt: time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC)},
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 25, CreatedAt: time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC)},
+			},
+			permissions: userPermissions,
+		},
+
+		// 2) GreaterThanEquals => Age >= 20 => IDs 1(30), 100(21), 101(25), 102(40)
+		{
+			name:       "GET /users?age=20 => should return IDs 1,100,101,102 (age>=20)",
+			method:     http.MethodGet,
+			path:       "/users?age=20",
+			wantStatus: http.StatusOK,
+			wantStruct: []user{
+				// ID=1 => Age=30
+				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "", Age: 30, CreatedAt: time.Date(2025, 01, 01, 0, 0, 0, 0, time.UTC)},
+				// ID=2 => Age=18 => excluded
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 21, CreatedAt: time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC)},
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 25, CreatedAt: time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC)},
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 40, CreatedAt: time.Date(2026, 01, 02, 0, 0, 0, 0, time.UTC)},
+			},
+			permissions: userPermissions,
+		},
+
+		// 3) LessThanEquals => CreatedAt <= ...
+		{
+			name:       "GET /users?createdAt=2024-12-31T23:59:59Z => returns IDs with CreatedAt <= that date",
+			method:     http.MethodGet,
+			path:       "/users?createdAt=2024-12-31T23:59:59Z",
+			wantStatus: http.StatusOK,
+			wantStruct: []user{
+				// ID=1 => 2025 => excluded
+				// ID=2 => 2023 => included
+				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "", Age: 18, CreatedAt: time.Date(2023, 01, 01, 0, 0, 0, 0, time.UTC)},
+				// ID=100 => 2024-06-01 => included
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 21, CreatedAt: time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC)},
+				// ID=101 => 2022-12-31 => included
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: "", Age: 25, CreatedAt: time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC)},
+				// ID=102 => 2026 => excluded
 			},
 			permissions: userPermissions,
 		},
@@ -227,7 +297,7 @@ func TestListUsers(t *testing.T) {
 			path:       "/users?page=2&page_size=1",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
-				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
+				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "", Age: 18, CreatedAt: time.Date(2023, 01, 01, 0, 0, 0, 0, time.UTC)},
 			},
 			permissions: userPermissions,
 		},
@@ -253,7 +323,7 @@ func TestGetUser(t *testing.T) {
 			method:      http.MethodGet,
 			path:        "/users/1",
 			wantStatus:  http.StatusOK,
-			wantStruct:  &user{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
+			wantStruct:  &user{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "", Age: 30, CreatedAt: time.Date(2025, 01, 01, 0, 0, 0, 0, time.UTC)},
 			permissions: userPermissions,
 		},
 		{
@@ -292,6 +362,8 @@ func TestCreateUser(t *testing.T) {
 				IgnoredField:           "SHOULD NOT",
 				IgnoredField2:          "SHOULD NOT",
 				IgnoredFieldUnlessRole: "No Admin => No Set",
+				Age:                    18,
+				CreatedAt:              time.Date(2023, 01, 01, 0, 0, 0, 0, time.UTC),
 			},
 			wantStatus:  http.StatusOK,
 			permissions: userPermissions,
@@ -310,6 +382,8 @@ func TestCreateUser(t *testing.T) {
 				IgnoredField:           "",
 				IgnoredField2:          "",
 				IgnoredFieldUnlessRole: "",
+				Age:                    18,
+				CreatedAt:              time.Date(2023, 01, 01, 0, 0, 0, 0, time.UTC),
 			},
 		},
 		{
@@ -325,6 +399,8 @@ func TestCreateUser(t *testing.T) {
 				IgnoredField:           "StillIgnore",
 				IgnoredField2:          "StillIgnore",
 				IgnoredFieldUnlessRole: "SetForAdmin",
+				Age:                    18,
+				CreatedAt:              time.Date(2023, 01, 01, 0, 0, 0, 0, time.UTC),
 			},
 			wantStatus:  http.StatusOK,
 			permissions: userPermissions,
@@ -344,6 +420,8 @@ func TestCreateUser(t *testing.T) {
 				IgnoredField:           "",
 				IgnoredField2:          "",
 				IgnoredFieldUnlessRole: "SetForAdmin",
+				Age:                    18,
+				CreatedAt:              time.Date(2023, 01, 01, 0, 0, 0, 0, time.UTC),
 			},
 		},
 		{
@@ -485,7 +563,7 @@ func TestPatchUser(t *testing.T) {
 	router, db, userPermissions := setupTestEnv(t)
 
 	// Create user #30 to patch
-	if err := db.Create(&user{ID: 30, Name: "PatchMe", Organization: "OrgPatch", Role: "User"}).Error; err != nil {
+	if err := db.Create(&user{ID: 30, Name: "PatchMe", Organization: "OrgPatch", Role: "User", Age: 21, CreatedAt: time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC)}).Error; err != nil {
 		t.Fatalf("failed to create user #30: %v", err)
 	}
 
@@ -517,6 +595,8 @@ func TestPatchUser(t *testing.T) {
 				IgnoredField:           "",
 				IgnoredField2:          "",
 				IgnoredFieldUnlessRole: "",
+				Age:                    21,
+				CreatedAt:              time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC),
 			},
 		},
 		{
@@ -545,6 +625,8 @@ func TestPatchUser(t *testing.T) {
 				IgnoredField:           "",
 				IgnoredField2:          "",
 				IgnoredFieldUnlessRole: "AdminPatchedValue",
+				Age:                    21,
+				CreatedAt:              time.Date(2024, 06, 01, 0, 0, 0, 0, time.UTC),
 			},
 		},
 		{
