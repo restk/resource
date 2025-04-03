@@ -495,7 +495,7 @@ func (r *Resource[T]) IgnoreFieldsUnlessRole(fields []string, accessMethod []acc
 // IgnoreFieldUnlessRole will ignore the field for all operations unless the requester has the roles provided. This can allow specific fields, such as join fields, to be ignored
 // but they can still be updated by admins in tools.
 //
-// This requires rbac to be enabled, else this will do nothing
+// This requires rbac to be enabled, else this will ignore fields for all roles.
 func (r *Resource[T]) IgnoreFieldUnlessRole(field string, accessMethod []access.Permission, roles []string) *Resource[T] {
 	for _, permission := range accessMethod {
 		if _, ok := r.ignoredFieldsByPermission[permission]; !ok {
@@ -686,7 +686,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	r.fieldByJSON = fieldByJSON
 
 	if !r.disableList {
-		listPath := groupPath + "/" + r.name
+		listPath := groupPath + "/" + r.pluralName
 
 		if r.generateDocs {
 			listDoc := openAPI.Register(&openapi.Operation{
@@ -829,7 +829,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableRead {
-		getPath := groupPath + "/" + r.name + "/:" + r.PrimaryFieldURLParam()
+		getPath := groupPath + "/" + r.pluralName + "/:" + r.PrimaryFieldURLParam()
 		if r.generateDocs {
 			getDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "get" + r.name,
@@ -926,7 +926,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableCreate {
-		createPath := groupPath + "/" + r.name
+		createPath := groupPath + "/" + r.pluralName
 		if r.generateDocs {
 			createDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "create" + r.name,
@@ -1017,7 +1017,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableUpdate {
-		updatePath := groupPath + "/" + r.name + "/:" + r.PrimaryFieldURLParam()
+		updatePath := groupPath + "/" + r.pluralName + "/:" + r.PrimaryFieldURLParam()
 		if r.generateDocs {
 			updateDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "update" + r.name,
@@ -1132,7 +1132,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableUpdate {
-		patchPath := groupPath + "/" + r.name + "/:" + r.PrimaryFieldURLParam()
+		patchPath := groupPath + "/" + r.pluralName + "/:" + r.PrimaryFieldURLParam()
 
 		if r.generateDocs {
 			patchDoc := openAPI.Register(&openapi.Operation{
@@ -1246,7 +1246,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableDelete {
-		deletePath := groupPath + "/" + r.name + "/:" + r.PrimaryFieldURLParam()
+		deletePath := groupPath + "/" + r.pluralName + "/:" + r.PrimaryFieldURLParam()
 		if r.generateDocs {
 			deleteDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "delete" + r.name,
