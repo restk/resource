@@ -123,22 +123,29 @@ func setupTestEnv(t *testing.T) (*gin.Engine, *gorm.DB, []string) {
 }
 
 func TestListUsers(t *testing.T) {
-	router, _, userPermissions := setupTestEnv(t)
+	router, db, userPermissions := setupTestEnv(t)
+
+	db.Create(&user{ID: 100, Name: "bob", Organization: "ex", Role: "User"})
+	db.Create(&user{ID: 101, Name: "bob", Organization: "ex2", Role: "User"})
+	db.Create(&user{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin"})
 
 	tests := []*Test{
 		{
-			name:       "GET /users - normal (no role => 'IgnoredFieldUnlessRole' is blank)",
+			name:       "GET /users - normal (no role => IgnoredFieldUnlessRole is blank)",
 			method:     http.MethodGet,
 			path:       "/users",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
 				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
 				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
 			},
 			permissions: userPermissions,
 		},
 		{
-			name:       "GET /users - admin role => 'IgnoredFieldUnlessRole' is visible",
+			name:       "GET /users - admin => sees IgnoredFieldUnlessRole='C' for IDs 1 & 2",
 			method:     http.MethodGet,
 			path:       "/users",
 			role:       "Admin",
@@ -146,16 +153,71 @@ func TestListUsers(t *testing.T) {
 			wantStruct: []user{
 				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"},
 				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "C"},
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
 			},
 			permissions: userPermissions,
 		},
 		{
-			name:       "GET /users - pagination page=1, page_size=1 => first item",
+			name:       "GET /users?name=bob => returns ID=100,101 only",
 			method:     http.MethodGet,
-			path:       "/users?page=1&page_size=1",
+			path:       "/users?name=bob",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
-				{ID: 1, Name: "Foo", Organization: "OrgA", Role: "Admin", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: ""},
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+			},
+			permissions: userPermissions,
+		},
+		{
+			name:       "GET /users?name=charlie => returns ID=102",
+			method:     http.MethodGet,
+			path:       "/users?name=charlie",
+			wantStatus: http.StatusOK,
+			wantStruct: []user{
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+			},
+			permissions: userPermissions,
+		},
+		{
+			name:       "GET /users?organization=ex => returns ID=100,102",
+			method:     http.MethodGet,
+			path:       "/users?organization=ex",
+			wantStatus: http.StatusOK,
+			wantStruct: []user{
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+			},
+			permissions: userPermissions,
+		},
+		{
+			name:       "GET /users?organization=ex2 => returns only ID=101",
+			method:     http.MethodGet,
+			path:       "/users?organization=ex2",
+			wantStatus: http.StatusOK,
+			wantStruct: []user{
+				{ID: 101, Name: "bob", Organization: "ex2", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+			},
+			permissions: userPermissions,
+		},
+		{
+			name:       "GET /users?id=102 => returns only user with ID=102",
+			method:     http.MethodGet,
+			path:       "/users?id=102",
+			wantStatus: http.StatusOK,
+			wantStruct: []user{
+				{ID: 102, Name: "charlie", Organization: "ex", Role: "Admin", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
+			},
+			permissions: userPermissions,
+		},
+		{
+			name:       "GET /users?name=bob&organization=ex => returns ID=100 only",
+			method:     http.MethodGet,
+			path:       "/users?name=bob&organization=ex",
+			wantStatus: http.StatusOK,
+			wantStruct: []user{
+				{ID: 100, Name: "bob", Organization: "ex", Role: "User", IgnoredField: "", IgnoredField2: "", IgnoredFieldUnlessRole: ""},
 			},
 			permissions: userPermissions,
 		},
