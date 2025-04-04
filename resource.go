@@ -22,16 +22,10 @@ import (
 )
 
 var (
-	pluralizeClient *pluralize.Client
+	pluralizeClient = pluralize.NewClient()
 	caser           = cases.Title(language.English)
 	SchemaRegistry  = openapi.NewMapRegistry("#/components/schemas/", openapi.DefaultSchemaNamer)
 )
-
-func init() {
-	// we init a global pluralize client since there was no good place to put this without initializing it every Resource creation
-	pluralizeClient = pluralize.NewClient()
-
-}
 
 type FieldQueryOperation string
 
