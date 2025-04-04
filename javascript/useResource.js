@@ -189,9 +189,9 @@ function useCreate(...args) {
 
             let response = null;
             if (subResource !== null) {
-                response = await ctx.axios.put(ctx.resourcePath + "/" + resource + "/" + arg1 + "/" + subResource, arg2);
+                response = await ctx.axios.post(ctx.resourcePath + "/" + resource + "/" + arg1 + "/" + subResource, arg2);
             }  else {
-                response = await ctx.axios.put(ctx.resourcePath + "/" + resource, arg1);
+                response = await ctx.axios.post(ctx.resourcePath + "/" + resource, arg1);
             }
 
             setData(response.data);

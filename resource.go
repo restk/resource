@@ -957,7 +957,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			createDoc.Request().Body(resourceTypeForDoc)
 		}
 
-		routes.PUT(createPath, func(c router.Context) {
+		routes.POST(createPath, func(c router.Context) {
 			if r.rbac != nil {
 				if !r.rbac.HasPermission(c, permissionName, access.PermissionCreate) {
 					ForbiddenAccess(c)

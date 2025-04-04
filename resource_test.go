@@ -352,7 +352,7 @@ func TestCreateUser(t *testing.T) {
 	tests := []*Test{
 		{
 			name:   "PUT /users => create normal user; ignored fields must not be set",
-			method: http.MethodPut,
+			method: http.MethodPost,
 			path:   "/users",
 			body: &user{
 				ID:                     10,
@@ -388,7 +388,7 @@ func TestCreateUser(t *testing.T) {
 		},
 		{
 			name:   "PUT /users => create user as admin => IgnoredFieldUnlessRole is set, others remain ignored",
-			method: http.MethodPut,
+			method: http.MethodPost,
 			path:   "/users",
 			role:   "Admin",
 			body: &user{
@@ -428,7 +428,7 @@ func TestCreateUser(t *testing.T) {
 			// If the resource or DB does not enforce unique ID, this might not fail.
 			// But let's assume there's a constraint and it fails or triggers a 500.
 			name:        "PUT /users => create user with existing ID => likely 500 or conflict",
-			method:      http.MethodPut,
+			method:      http.MethodPost,
 			path:        "/users",
 			permissions: userPermissions,
 			body: &user{
@@ -439,7 +439,7 @@ func TestCreateUser(t *testing.T) {
 		},
 		{
 			name:   "PUT /users => no create permission => forbidden",
-			method: http.MethodPut,
+			method: http.MethodPost,
 			path:   "/users",
 			body: &user{
 				ID:   12,

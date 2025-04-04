@@ -36,4 +36,5 @@ type Router interface {
 	DELETE(path string, handlers ...Handler) Router
 	PATCH(path string, handlers ...Handler) Router
 	PUT(path string, handlers ...Handler) Router
+	POST(path string, handlers ...Handler) Router
 }
