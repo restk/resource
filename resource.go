@@ -199,6 +199,9 @@ type Resource[T any] struct {
 
 	// docs
 	generateDocs bool
+
+	// other
+	maxInputBytes int64
 }
 
 // NewResource creates a new resource. Name is expected to be singular and we attempt to make it plural for doc purposes. To override the
@@ -228,6 +231,7 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		pageSize:                  10,
 		maxPageSize:               250,
 		maxLimit:                  250,
+		maxInputBytes:             10 * 1024 * 1024,
 		// hasAccess:            DefaultHasAccess[T],
 	}
 
@@ -964,7 +968,8 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			tx := r.tx(c)
 
 			defer c.Request().Body.Close()
-			body, err := io.ReadAll(c.Request().Body)
+			lr := io.LimitReader(c.Request().Body, r.maxInputBytes)
+			body, err := io.ReadAll(lr)
 			if err != nil {
 				InternalServerError(c, err)
 			}
@@ -1081,7 +1086,8 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			}
 
 			defer c.Request().Body.Close()
-			body, err := io.ReadAll(c.Request().Body)
+			lr := io.LimitReader(c.Request().Body, r.maxInputBytes)
+			body, err := io.ReadAll(lr)
 			if err != nil {
 				InternalServerError(c, err)
 			}
@@ -1223,7 +1229,8 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			}
 
 			defer c.Request().Body.Close()
-			body, err := io.ReadAll(c.Request().Body)
+			lr := io.LimitReader(c.Request().Body, r.maxInputBytes)
+			body, err := io.ReadAll(lr)
 			if err != nil {
 				InternalServerError(c, err)
 			}
@@ -1532,4 +1539,10 @@ func (r *Resource[T]) Validate(v any) []error {
 	openapi.Validate(SchemaRegistry, r.schema, pb, openapi.ModeWriteToServer, v, res)
 
 	return res.Errors
+}
+
+// MaxInputBytes sets the maximum bytes when reading a resource from a client, by default
+// this is 10MB
+func (r *Resource[T]) MaxInputBytes(maxInputBytes int64) {
+	r.maxInputBytes = maxInputBytes
 }
