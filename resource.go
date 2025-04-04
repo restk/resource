@@ -141,7 +141,7 @@ type Resource[T any] struct {
 	pluralName   string // name in plural form, if name is 'user', then this would be 'users'. This should only be used for doc purposes
 	tags         []string
 	primaryField string
-	validator    func(objectToValidate T) bool
+	// validator    func(objectToValidate T) bool
 	// hasAccess    func(c router.Context, resource string, action AccessAction) bool
 	hasOwnership func(c router.Context, resource string, obj *T) bool
 	getID        func(obj *T) any
@@ -532,7 +532,13 @@ func generateFieldByJSON(resource interface{}) map[string]string {
 	fields := reflect.VisibleFields(typeOf)
 
 	for _, field := range fields {
-		jsonTag := field.Tag.Get("json")
+		jsonTag := ""
+		if j := field.Tag.Get("json"); j != "" {
+			if n := strings.Split(j, ",")[0]; n != "" {
+				jsonTag = n
+			}
+		}
+
 		if jsonTag != "" {
 			fieldByJSON[jsonTag] = field.Name
 		}
@@ -709,7 +715,22 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			}).Summary("Gets a list of " + r.pluralName).
 				Description("Get a list of " + r.pluralName + " filtering via query params. This endpoint also supports pagination")
 
-			listDoc.Request().QueryParam("id", r.name).Description("id of the resource")
+			for _, field := range r.fields {
+				if _, ok := r.ignoredFieldsByPermission[access.PermissionList][field.Name]; ok {
+					continue
+				}
+
+				name := field.Name
+				if j := field.StructField.Tag.Get("json"); j != "" {
+					if n := strings.Split(j, ",")[0]; n != "" {
+						name = n
+					}
+				}
+
+				if prop, ok := r.schema.Properties[name]; ok {
+					listDoc.Request().QueryParam(field.Name, valueOfType(field.StructField.Type)).Description(prop.Description)
+				}
+			}
 		}
 
 		routes.GET(listPath, func(c router.Context) {
@@ -795,6 +816,8 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 					continue
 				}
 
+				// TODO: validate param based on `doc` tag, how do we call
+				// OpenAPI.Validate() on a single field?
 				column, parsedValue, err := parseFieldFromParam(tx, queryParams.Get(param), resourceTypeForDoc, field)
 				if err != nil {
 					InternalServerError(c, err)
@@ -1539,4 +1562,11 @@ func (r *Resource[T]) Validate(v any) []error {
 // this is 10MB
 func (r *Resource[T]) MaxInputBytes(maxInputBytes int64) {
 	r.maxInputBytes = maxInputBytes
+}
+
+func valueOfType(t reflect.Type) interface{} {
+	if t.Kind() == reflect.Ptr {
+		return reflect.New(t.Elem()).Interface()
+	}
+	return reflect.New(t).Interface()
 }
