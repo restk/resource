@@ -969,6 +969,8 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				InternalServerError(c, err)
 			}
 
+			// we double unmarshal here because openapi.Validate() only works with
+			// map[string]any for validation
 			var resourceForValidation map[string]any
 			err = json.Unmarshal(body, &resourceForValidation)
 			if err != nil {
@@ -1084,6 +1086,8 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				InternalServerError(c, err)
 			}
 
+			// we double unmarshal here because openapi.Validate() only works with
+			// map[string]any for validation
 			var resourceForValidation map[string]any
 			err = json.Unmarshal(body, &resourceForValidation)
 			if err != nil {
@@ -1224,6 +1228,8 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				InternalServerError(c, err)
 			}
 
+			// we double unmarshal here because openapi.Validate() only works with
+			// map[string]any for validation
 			var resourceForValidation map[string]any
 			err = json.Unmarshal(body, &resourceForValidation)
 			if err != nil {
