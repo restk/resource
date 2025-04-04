@@ -72,10 +72,10 @@ var (
 		c.WriteJSON(http.StatusInternalServerError, S{"code": userError.Code, "message": userError.Message})
 	}
 	BadRequest = func(c router.Context) {
-		c.WriteJSON(http.StatusBadRequest, S{"code": 500, "message": "Invalid request"})
+		c.WriteJSON(http.StatusBadRequest, S{"code": 400, "message": "Invalid request"})
 	}
 	InvalidInput = func(c router.Context, msg string) {
-		c.WriteJSON(http.StatusBadRequest, S{"code": 999, "message": msg})
+		c.WriteJSON(http.StatusBadRequest, S{"code": 400, "message": msg})
 	}
 	ForbiddenAccess = func(c router.Context) {
 		c.WriteJSON(http.StatusForbidden, S{"code": 407, "message": "Forbidden access to resource"})
