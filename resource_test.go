@@ -719,7 +719,7 @@ func runTest(t *testing.T, tt *Test, router *gin.Engine) {
 		router.ServeHTTP(w, req)
 
 		if w.Code != tt.wantStatus {
-			t.Errorf("Wanted status %d, got %d", tt.wantStatus, w.Code)
+			t.Errorf("Wanted status %d, got %d, \nRaw Body: %s", tt.wantStatus, w.Code, w.Body.String())
 		}
 
 		if tt.wantStruct != nil {

@@ -2,7 +2,9 @@ package resource
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -22,11 +24,13 @@ import (
 var (
 	pluralizeClient *pluralize.Client
 	caser           = cases.Title(language.English)
+	SchemaRegistry  = openapi.NewMapRegistry("#/components/schemas/", openapi.DefaultSchemaNamer)
 )
 
 func init() {
 	// we init a global pluralize client since there was no good place to put this without initializing it every Resource creation
 	pluralizeClient = pluralize.NewClient()
+
 }
 
 type FieldQueryOperation string
@@ -73,9 +77,11 @@ var (
 	CustomUserError = func(c router.Context, userError *UserError) {
 		c.WriteJSON(http.StatusInternalServerError, S{"code": userError.Code, "message": userError.Message})
 	}
-
 	BadRequest = func(c router.Context) {
 		c.WriteJSON(http.StatusBadRequest, S{"code": 500, "message": "Invalid request"})
+	}
+	InvalidInput = func(c router.Context, msg string) {
+		c.WriteJSON(http.StatusBadRequest, S{"code": 999, "message": msg})
 	}
 	ForbiddenAccess = func(c router.Context) {
 		c.WriteJSON(http.StatusForbidden, S{"code": 407, "message": "Forbidden access to resource"})
@@ -147,6 +153,7 @@ type Resource[T any] struct {
 	getID        func(obj *T) any
 	table        interface{}
 	preload      []string
+	schema       *openapi.Schema
 
 	// fields
 	fields                    []*Field
@@ -226,6 +233,7 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 
 	typeOf := reflect.TypeOf(table)
 	visibleFields := reflect.VisibleFields(typeOf)
+	r.schema = openapi.SchemaFromType(SchemaRegistry, typeOf)
 
 	for _, field := range visibleFields {
 		r.fields = append(r.fields, &Field{
@@ -318,12 +326,6 @@ func (r *Resource[T]) EnableACL(acl access.ACL, grantPermissionsOnCreate []acces
 	r.acl = acl
 	r.aclGrantPermissions = grantPermissionsOnCreate
 	r.getID = f
-}
-
-// SetValidator sets the validator function for this object. The function passed is expected to return
-// true if the object passes all validation. If the object fails it, it expects to return false.
-func (r *Resource[T]) SetValidator(f func(objectToValidate T) bool) {
-	r.validator = f
 }
 
 // PrimaryFieldURLParam returns the URL param for the primary field. This must be unique across resources.
@@ -765,7 +767,6 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			// if this is a grouped resource, we add the primary field of the resource this belongs to
 			if r.belongsTo != nil {
-
 				param := c.Param(r.belongsTo.PrimaryFieldURLParam())
 				columnForWhereClause, parsedValue, err := parseFieldFromParam(tx, param, resourceTypeForDoc, r.belongsToField)
 				if err != nil {
@@ -961,8 +962,33 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			}
 
 			tx := r.tx(c)
+
+			defer c.Request().Body.Close()
+			body, err := io.ReadAll(c.Request().Body)
+			if err != nil {
+				InternalServerError(c, err)
+			}
+
+			var resourceForValidation map[string]any
+			err = json.Unmarshal(body, &resourceForValidation)
+			if err != nil {
+				InternalServerError(c, err)
+				return
+			}
+
+			errs := r.Validate(resourceForValidation)
+			if len(errs) > 0 {
+				errStr := []string{}
+				for _, err := range errs {
+					errStr = append(errStr, err.Error())
+				}
+
+				InvalidInput(c, strings.Join(errStr, ","))
+				return
+			}
+
 			var resource *T
-			err := c.ReadJSON(&resource)
+			err = json.Unmarshal(body, &resource)
 			if err != nil {
 				InternalServerError(c, err)
 				return
@@ -1052,8 +1078,32 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				}
 			}
 
+			defer c.Request().Body.Close()
+			body, err := io.ReadAll(c.Request().Body)
+			if err != nil {
+				InternalServerError(c, err)
+			}
+
+			var resourceForValidation map[string]any
+			err = json.Unmarshal(body, &resourceForValidation)
+			if err != nil {
+				InternalServerError(c, err)
+				return
+			}
+
+			errs := r.Validate(resourceForValidation)
+			if len(errs) > 0 {
+				errStr := []string{}
+				for _, err := range errs {
+					errStr = append(errStr, err.Error())
+				}
+
+				InvalidInput(c, strings.Join(errStr, ","))
+				return
+			}
+
 			var resource *T
-			err := c.ReadJSON(&resource)
+			err = json.Unmarshal(body, &resource)
 			if err != nil {
 				InternalServerError(c, err)
 				return
@@ -1168,8 +1218,32 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				}
 			}
 
+			defer c.Request().Body.Close()
+			body, err := io.ReadAll(c.Request().Body)
+			if err != nil {
+				InternalServerError(c, err)
+			}
+
+			var resourceForValidation map[string]any
+			err = json.Unmarshal(body, &resourceForValidation)
+			if err != nil {
+				InternalServerError(c, err)
+				return
+			}
+
+			errs := r.Validate(resourceForValidation)
+			if len(errs) > 0 {
+				errStr := []string{}
+				for _, err := range errs {
+					errStr = append(errStr, err.Error())
+				}
+
+				InvalidInput(c, strings.Join(errStr, ","))
+				return
+			}
+
 			var resource *T
-			err := c.ReadJSON(&resource)
+			err = json.Unmarshal(body, &resource)
 			if err != nil {
 				InternalServerError(c, err)
 				return
@@ -1443,4 +1517,13 @@ func (r *Resource[T]) DisableDelete() {
 // DisableList disables listing on this resource
 func (r *Resource[T]) DisableList() {
 	r.disableList = true
+}
+
+// Validate validates that the value v is a valid resource
+func (r *Resource[T]) Validate(v any) []error {
+	pb := openapi.NewPathBuffer([]byte(""), 0)
+	res := &openapi.ValidateResult{}
+	openapi.Validate(SchemaRegistry, r.schema, pb, openapi.ModeWriteToServer, v, res)
+
+	return res.Errors
 }
