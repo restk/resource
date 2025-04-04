@@ -728,7 +728,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				}
 
 				if prop, ok := r.schema.Properties[name]; ok {
-					listDoc.Request().QueryParam(field.Name, valueOfType(field.StructField.Type)).Description(prop.Description)
+					listDoc.Request().QueryParam(name, valueOfType(field.StructField.Type)).Description(prop.Description)
 				}
 			}
 		}
