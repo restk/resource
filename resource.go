@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"reflect"
 	"strconv"
 	"strings"
@@ -685,7 +686,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	groupPath := ""
 	permissionName := r.name
 	if r.belongsTo != nil {
-		groupPath = "/" + r.belongsTo.Name() + "/:" + r.belongsTo.PrimaryFieldURLParam()
+		groupPath = path.Join("/", r.belongsTo.Name(), "/:"+r.belongsTo.PrimaryFieldURLParam())
 		permissionName = r.belongsTo.Name() + "-" + r.name
 	}
 
@@ -705,13 +706,13 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	r.fieldByJSON = fieldByJSON
 
 	if !r.disableList {
-		listPath := groupPath + "/" + r.pluralName
+		listPath := path.Join(groupPath, "/", r.pluralName)
 
 		if r.generateDocs {
 			listDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "list" + r.name,
 				Method:      "GET",
-				Path:        routes.BasePath() + listPath,
+				Path:        path.Join(routes.BasePath(), listPath),
 				Tags:        r.tags,
 			}).Summary("Gets a list of " + r.pluralName).
 				Description("Get a list of " + r.pluralName + " filtering via query params. This endpoint also supports pagination")
@@ -865,12 +866,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableRead {
-		getPath := groupPath + "/" + r.pluralName + "/:" + r.PrimaryFieldURLParam()
+		getPath := path.Join(groupPath, "/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
 		if r.generateDocs {
 			getDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "get" + r.name,
 				Method:      "GET",
-				Path:        routes.BasePath() + getPath,
+				Path:        path.Join(routes.BasePath(), getPath),
 				Tags:        r.tags,
 			}).Summary("Returns a single " + r.name).
 				Description("Returns a single " + r.name + " by the primary id.")
@@ -962,12 +963,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableCreate {
-		createPath := groupPath + "/" + r.pluralName
+		createPath := path.Join(groupPath, "/", r.pluralName)
 		if r.generateDocs {
 			createDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "create" + r.name,
 				Method:      "PUT",
-				Path:        routes.BasePath() + createPath,
+				Path:        path.Join(routes.BasePath(), createPath),
 				Tags:        r.tags,
 			}).Summary("Creates a new " + r.name).
 				Description("Creates a new " + r.name + ". If the resource already exist, this returns an error.")
@@ -1081,12 +1082,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableUpdate {
-		updatePath := groupPath + "/" + r.pluralName + "/:" + r.PrimaryFieldURLParam()
+		updatePath := path.Join(groupPath, "/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
 		if r.generateDocs {
 			updateDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "update" + r.name,
 				Method:      "PUT",
-				Path:        routes.BasePath() + updatePath,
+				Path:        path.Join(routes.BasePath(), updatePath),
 				Tags:        r.tags,
 			}).Summary("Updates a single " + r.name).
 				Description("Updates a single " + r.name + ".")
@@ -1223,13 +1224,13 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableUpdate {
-		patchPath := groupPath + "/" + r.pluralName + "/:" + r.PrimaryFieldURLParam()
+		patchPath := path.Join(groupPath, "/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
 
 		if r.generateDocs {
 			patchDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "patch" + r.name,
 				Method:      "PATCH",
-				Path:        routes.BasePath() + patchPath,
+				Path:        path.Join(routes.BasePath(), patchPath),
 				Tags:        r.tags,
 			}).Summary("Patches a single " + r.name).
 				Description("Patches a single " + r.name + ".")
@@ -1364,12 +1365,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableDelete {
-		deletePath := groupPath + "/" + r.pluralName + "/:" + r.PrimaryFieldURLParam()
+		deletePath := path.Join(groupPath+"/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
 		if r.generateDocs {
 			deleteDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "delete" + r.name,
 				Method:      "DELETE",
-				Path:        routes.BasePath() + deletePath,
+				Path:        path.Join(routes.BasePath(), deletePath),
 				Tags:        r.tags,
 			}).Summary("Deletes a single " + r.name).
 				Description("Deletes a single " + r.name + ".")
