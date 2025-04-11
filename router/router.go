@@ -37,4 +37,5 @@ type Router interface {
 	PATCH(path string, handlers ...Handler) Router
 	PUT(path string, handlers ...Handler) Router
 	POST(path string, handlers ...Handler) Router
+	BasePath() string
 }

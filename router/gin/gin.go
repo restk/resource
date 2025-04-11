@@ -155,3 +155,7 @@ func (r *Router) POST(path string, handlers ...router.Handler) router.Router {
 
 	return r
 }
+
+func (r *Router) BasePath() string {
+	return r.gin.BasePath()
+}

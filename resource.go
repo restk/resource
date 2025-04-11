@@ -226,6 +226,7 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		maxPageSize:               250,
 		maxLimit:                  250,
 		maxInputBytes:             10 * 1024 * 1024,
+
 		// hasAccess:            DefaultHasAccess[T],
 	}
 
@@ -710,7 +711,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			listDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "list" + r.name,
 				Method:      "GET",
-				Path:        listPath,
+				Path:        routes.BasePath() + listPath,
 				Tags:        r.tags,
 			}).Summary("Gets a list of " + r.pluralName).
 				Description("Get a list of " + r.pluralName + " filtering via query params. This endpoint also supports pagination")
@@ -869,7 +870,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			getDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "get" + r.name,
 				Method:      "GET",
-				Path:        getPath,
+				Path:        routes.BasePath() + getPath,
 				Tags:        r.tags,
 			}).Summary("Returns a single " + r.name).
 				Description("Returns a single " + r.name + " by the primary id.")
@@ -966,7 +967,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			createDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "create" + r.name,
 				Method:      "PUT",
-				Path:        createPath,
+				Path:        routes.BasePath() + createPath,
 				Tags:        r.tags,
 			}).Summary("Creates a new " + r.name).
 				Description("Creates a new " + r.name + ". If the resource already exist, this returns an error.")
@@ -1085,7 +1086,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			updateDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "update" + r.name,
 				Method:      "PUT",
-				Path:        updatePath,
+				Path:        routes.BasePath() + updatePath,
 				Tags:        r.tags,
 			}).Summary("Updates a single " + r.name).
 				Description("Updates a single " + r.name + ".")
@@ -1228,7 +1229,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			patchDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "patch" + r.name,
 				Method:      "PATCH",
-				Path:        patchPath,
+				Path:        routes.BasePath() + patchPath,
 				Tags:        r.tags,
 			}).Summary("Patches a single " + r.name).
 				Description("Patches a single " + r.name + ".")
@@ -1368,7 +1369,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			deleteDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "delete" + r.name,
 				Method:      "DELETE",
-				Path:        deletePath,
+				Path:        routes.BasePath() + deletePath,
 				Tags:        r.tags,
 			}).Summary("Deletes a single " + r.name).
 				Description("Deletes a single " + r.name + ".")
