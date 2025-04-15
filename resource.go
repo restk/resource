@@ -59,7 +59,7 @@ func NewUserError(code int, message string) error {
 }
 
 // S is used to easily craft JSON responses, see ResourceNotFound
-type S map[string]interface{}
+type S map[string]any
 
 var (
 	ResourceNotFound = func(c router.Context) {
@@ -147,7 +147,7 @@ type Resource[T any] struct {
 	// hasAccess    func(c router.Context, resource string, action AccessAction) bool
 	hasOwnership func(c router.Context, resource string, obj *T) bool
 	getID        func(obj *T) any
-	table        interface{}
+	table        any
 	preload      []string
 	schema       *openapi.Schema
 
@@ -163,7 +163,7 @@ type Resource[T any] struct {
 	afterSave      map[access.Permission][]func(c router.Context, obj *T) error
 	beforeDelete   []func(c router.Context, obj *T) error
 	afterDelete    []func(c router.Context, obj *T) error
-	beforeResponse map[access.Permission]func(c router.Context, obj *T) (interface{}, error)
+	beforeResponse map[access.Permission]func(c router.Context, obj *T) (any, error)
 
 	// pagination
 	maxPageSize int
@@ -220,7 +220,7 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		afterSave:                 make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
 		beforeDelete:              make([]func(c router.Context, obj *T) error, 0),
 		afterDelete:               make([]func(c router.Context, obj *T) error, 0),
-		beforeResponse:            make(map[access.Permission]func(c router.Context, obj *T) (interface{}, error), 0),
+		beforeResponse:            make(map[access.Permission]func(c router.Context, obj *T) (any, error), 0),
 		queryOperatorByField:      make(map[string]FieldQueryOperation, 0),
 		columnByField:             make(map[string]string, 0),
 		preload:                   make([]string, 0),
@@ -535,7 +535,7 @@ func (r *Resource[T]) retrieveQueryFieldOperator(field string) string {
 }
 
 // fieldByJSON returns a field name by its JSON tag
-func generateFieldByJSON(resource interface{}) map[string]string {
+func generateFieldByJSON(resource any) map[string]string {
 	fieldByJSON := make(map[string]string)
 
 	typeOf := reflect.TypeOf(resource)
@@ -558,7 +558,7 @@ func generateFieldByJSON(resource interface{}) map[string]string {
 }
 
 // generateColumnNameByField generates a mapping (field -> column name) for a resource T
-func generateColumnByField(db *gorm.DB, resource interface{}) (map[string]string, error) {
+func generateColumnByField(db *gorm.DB, resource any) (map[string]string, error) {
 	columnByField := make(map[string]string, 0)
 
 	// look up the belongs to field using gorm statement parsing so we can do a where clause lookup
@@ -589,7 +589,7 @@ func generateColumnByField(db *gorm.DB, resource interface{}) (map[string]string
 // parseFieldFromParam takes a URL param (which is always a string), such as :userId, and finds that field on a resource.
 // It then converts the URL param (string) to the fields proper type (string -> uint if the field is a uint)
 // It also returns the fields column name so it can be used in where clauses.
-func parseFieldFromParam(db *gorm.DB, param string, resource interface{}, field string) (string, interface{}, error) {
+func parseFieldFromParam(db *gorm.DB, param string, resource any, field string) (string, any, error) {
 	if resource == nil {
 		return "", nil, errors.Errorf("resource is nil when calling parseFieldFromParam")
 	}
@@ -607,7 +607,7 @@ func parseFieldFromParam(db *gorm.DB, param string, resource interface{}, field 
 	}
 
 	columnForWhereClause := gormField.DBName
-	var parsedValue interface{}
+	var parsedValue any
 	switch gormField.StructField.Type.Kind() {
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		parseduIntValue, err := strconv.ParseUint(param, 10, 64)
@@ -904,7 +904,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			tx := r.tx(c)
 			whereClauseQuery := ""
-			whereClauseArgs := make([]interface{}, 0)
+			whereClauseArgs := make([]any, 0)
 
 			primaryFieldValue := c.Param(r.PrimaryFieldURLParam())
 			whereClauseQuery = fmt.Sprintf("%v = ?", r.primaryField)
@@ -1015,7 +1015,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				return
 			}
 
-			errs := r.Validate(resourceForValidation)
+			errs := r.IsValid(resourceForValidation)
 			if len(errs) > 0 {
 				errStr := []string{}
 				for _, err := range errs {
@@ -1133,7 +1133,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				return
 			}
 
-			errs := r.Validate(resourceForValidation)
+			errs := r.IsValid(resourceForValidation)
 			if len(errs) > 0 {
 				errStr := []string{}
 				for _, err := range errs {
@@ -1175,7 +1175,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			tx := r.tx(c)
 			whereClauseQuery := ""
-			whereClauseArgs := make([]interface{}, 0)
+			whereClauseArgs := make([]any, 0)
 
 			primaryFieldValue := c.Param(r.PrimaryFieldURLParam())
 			whereClauseQuery = fmt.Sprintf("%v = ?", r.primaryField)
@@ -1276,7 +1276,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				return
 			}
 
-			errs := r.Validate(resourceForValidation)
+			errs := r.IsValid(resourceForValidation)
 			if len(errs) > 0 {
 				errStr := []string{}
 				for _, err := range errs {
@@ -1318,7 +1318,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			tx := r.tx(c)
 			whereClauseQuery := ""
-			whereClauseArgs := make([]interface{}, 0)
+			whereClauseArgs := make([]any, 0)
 
 			primaryFieldValue := c.Param(r.PrimaryFieldURLParam())
 			whereClauseQuery = fmt.Sprintf("%v = ?", r.primaryField)
@@ -1400,7 +1400,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			tx := r.tx(c)
 			whereClauseQuery := ""
-			whereClauseArgs := make([]interface{}, 0)
+			whereClauseArgs := make([]any, 0)
 
 			primaryFieldValue := c.Param(r.PrimaryFieldURLParam())
 			whereClauseQuery = fmt.Sprintf("%v = ?", r.primaryField)
@@ -1564,8 +1564,8 @@ func (r *Resource[T]) DisableList() {
 	r.disableList = true
 }
 
-// Validate validates that the value v is a valid resource
-func (r *Resource[T]) Validate(v any) []error {
+// IsValid validates that the value v is a valid resource
+func (r *Resource[T]) IsValid(v any) []error {
 	pb := openapi.NewPathBuffer([]byte(""), 0)
 	res := &openapi.ValidateResult{}
 	openapi.Validate(SchemaRegistry, r.schema, pb, openapi.ModeWriteToServer, v, res)
@@ -1579,7 +1579,7 @@ func (r *Resource[T]) MaxInputBytes(maxInputBytes int64) {
 	r.maxInputBytes = maxInputBytes
 }
 
-func valueOfType(t reflect.Type) interface{} {
+func valueOfType(t reflect.Type) any {
 	if t.Kind() == reflect.Ptr {
 		return reflect.New(t.Elem()).Interface()
 	}
