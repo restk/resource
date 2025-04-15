@@ -140,6 +140,7 @@ type FieldIgnoreRule struct {
 type Resource[T any] struct {
 	name         string
 	pluralName   string // name in plural form, if name is 'user', then this would be 'users'. This should only be used for doc purposes
+	path         string
 	tags         []string
 	primaryField string
 	// validator    func(objectToValidate T) bool
@@ -208,6 +209,7 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 	r := &Resource[T]{
 		name:                      name,
 		pluralName:                pluralizedName,
+		path:                      pluralizedName,
 		primaryField:              primaryField,
 		table:                     table,
 		tags:                      []string{caser.String(pluralizedName)},
@@ -259,7 +261,12 @@ func (r *Resource[T]) PluralName() string {
 	return r.pluralName
 }
 
-// Plural is the plural name for this resource.
+// Path sets path for the resource. By default path is the Plural name of a resource, this allows you to override that.
+func (r *Resource[T]) Path(path string) {
+	r.path = path
+}
+
+// Plural sets the plural name for this resource.
 func (r *Resource[T]) Plural(pluralName string) {
 	r.pluralName = pluralName
 }
@@ -706,7 +713,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	r.fieldByJSON = fieldByJSON
 
 	if !r.disableList {
-		listPath := path.Join(groupPath, "/", r.pluralName)
+		listPath := path.Join(groupPath, "/", r.path)
 
 		if r.generateDocs {
 			listDoc := openAPI.Register(&openapi.Operation{
@@ -866,7 +873,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableRead {
-		getPath := path.Join(groupPath, "/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
+		getPath := path.Join(groupPath, "/", r.path, "/:"+r.PrimaryFieldURLParam())
 		if r.generateDocs {
 			getDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "get" + r.name,
@@ -963,7 +970,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableCreate {
-		createPath := path.Join(groupPath, "/", r.pluralName)
+		createPath := path.Join(groupPath, "/", r.path)
 		if r.generateDocs {
 			createDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "create" + r.name,
@@ -1082,7 +1089,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableUpdate {
-		updatePath := path.Join(groupPath, "/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
+		updatePath := path.Join(groupPath, "/", r.path, "/:"+r.PrimaryFieldURLParam())
 		if r.generateDocs {
 			updateDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "update" + r.name,
@@ -1224,7 +1231,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableUpdate {
-		patchPath := path.Join(groupPath, "/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
+		patchPath := path.Join(groupPath, "/", r.path, "/:"+r.PrimaryFieldURLParam())
 
 		if r.generateDocs {
 			patchDoc := openAPI.Register(&openapi.Operation{
@@ -1365,7 +1372,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableDelete {
-		deletePath := path.Join(groupPath+"/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
+		deletePath := path.Join(groupPath+"/", r.path, "/:"+r.PrimaryFieldURLParam())
 		if r.generateDocs {
 			deleteDoc := openAPI.Register(&openapi.Operation{
 				OperationID: "delete" + r.name,
