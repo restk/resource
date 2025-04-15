@@ -198,6 +198,7 @@ type Resource[T any] struct {
 
 	// other
 	maxInputBytes int64
+	txContextKey  string
 }
 
 // NewResource creates a new resource. Name is expected to be singular and we attempt to make it plural for doc purposes. To override the
@@ -229,7 +230,7 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		maxPageSize:               250,
 		maxLimit:                  250,
 		maxInputBytes:             10 * 1024 * 1024,
-
+		txContextKey:              "gorm_tx",
 		// hasAccess:            DefaultHasAccess[T],
 	}
 
@@ -641,10 +642,15 @@ func parseFieldFromParam(db *gorm.DB, param string, resource interface{}, field 
 	return columnForWhereClause, parsedValue, nil
 }
 
+// TxContextKey overrides the transaction key used for queries, by default this is "gorm_tx"
+func (r *Resource[T]) TxContextKey(txKey string) {
+	r.txContextKey = txKey
+}
+
 // Tx returns a transaction from the resource or panics
 // TODO: when implementing the generic model interface, we should have ways for the user to determine where the tx comes from instead of hard pulling it from the context
 func (r *Resource[T]) tx(ctx router.Context) *gorm.DB {
-	val := ctx.Value("gorm_tx") // TODO: allow user to specify the context key to get the transaction from
+	val := ctx.Value(r.txContextKey)
 	if tx, ok := val.(*gorm.DB); ok {
 		return tx
 	}
@@ -681,12 +687,12 @@ func (r *Resource[T]) omitIgnoredFields(ctx context.Context, permission access.P
 
 // GenerateRESTAPI generates REST API endpoints for a resource. This also handles RBAC and makes sure the calling user has permission for an action on a resource.
 //
-// GET /resources                  -> returns an array of resources (with a max amount per page) and filters
-// GET /resources/:primaryField    -> returns a paginated list of resources (with a max amount per page) and filters
-// PUT /resource     -> creates or updates a single resource (with allowable save fields)
-// PUT /resources    -> creates or updates a list of resources (with allowable save fields)
-// DELETE /resource  -> deletes a single resource
-// DELETE /resources -> deletes a list of resources
+// GET /resources                   -> returns a paginated list of resources (with a max amount per page) and filters
+// GET /resources/:primaryField     -> returns a single resource by the primary field
+// POST /resources                  -> creates a single resource
+// PUT /resources/:primaryField     -> updates a single resource by its primary field
+// PATCH /resources/:primaryField   -> patches a single resource by its primary field
+// DELETE /resources/:primaryField  -> deletes a single resource by its primary field
 func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAPI *openapi.Builder) error {
 	// generate column names
 	// TODO: add a storage interface instead of using gorm directly so Resource can be used for any other storage medium
