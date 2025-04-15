@@ -101,7 +101,11 @@ function useList(...args) {
 
         } catch (error) {
             setSuccess(false);
-            setError(error);
+            if (error.response && error.response.data && error.response.data.message) {
+                setError(error.response.data);
+            } else {
+                setError(error);
+            }
             setIsLoading(false);
         }
     }
@@ -149,7 +153,11 @@ function useGet(...args) {
 
         } catch (error) {
             setSuccess(false);
-            setError(error);
+            if (error.response && error.response.data && error.response.data.message) {
+                setError(error.response.data);
+            } else {
+                setError(error);
+            }
             setIsLoading(false);
         }
     }
@@ -181,19 +189,23 @@ function useCreate(...args) {
 
             let response = null;
             if (subResource !== null) {
-                response = await ctx.axios.put(ctx.resourcePath + "/" + resource + "/" + arg1 + "/" + subResource, arg2);
+                response = await ctx.axios.post(ctx.resourcePath + "/" + resource + "/" + arg1 + "/" + subResource, arg2);
             }  else {
-                response = await ctx.axios.put(ctx.resourcePath + "/" + resource, arg1);
+                response = await ctx.axios.post(ctx.resourcePath + "/" + resource, arg1);
             }
 
             setData(response.data);
             setIsLoading(false);
             setSuccess(true);
         } catch (error) {
-            setError(error);
+            setSuccess(false);
+            if (error.response && error.response.data && error.response.data.message) {
+                setError(error.response.data);
+            } else {
+                setError(error);
+            }
             setIsLoading(false);
         }
-
     }
 
     return {
@@ -233,7 +245,11 @@ function useUpdate(...args) {
 
         } catch (error) {
             setSuccess(false);
-            setError(error);
+            if (error.response && error.response.data && error.response.data.message) {
+                setError(error.response.data);
+            } else {
+                setError(error);
+            }
             setIsLoading(false);
         }
     }
@@ -275,7 +291,11 @@ function usePatch(...args) {
 
         } catch (error) {
             setSuccess(false);
-            setError(error);
+            if (error.response && error.response.data && error.response.data.message) {
+                setError(error.response.data);
+            } else {
+                setError(error);
+            }
             setIsLoading(false);
         }
     }
@@ -315,7 +335,11 @@ function useDelete(...args) {
             setSuccess(true);
         } catch (error) {
             setSuccess(false);
-            setError(error);
+            if (error.response && error.response.data && error.response.data.message) {
+                setError(error.response.data);
+            } else {
+                setError(error);
+            }
             setIsLoading(false);
         }
     }

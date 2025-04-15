@@ -16,6 +16,7 @@ type Context interface {
 	QueryParams() QueryParams
 	WriteJSON(code int, v interface{})
 	ReadJSON(v interface{}) error
+	Request() *http.Request
 	SetSameSite(sameSite http.SameSite)
 	Cookie(name string) (string, error)
 	SetCookie(name string, value string, maxAge int, path string, domain string, secure bool, httpOnly bool)
@@ -35,4 +36,6 @@ type Router interface {
 	DELETE(path string, handlers ...Handler) Router
 	PATCH(path string, handlers ...Handler) Router
 	PUT(path string, handlers ...Handler) Router
+	POST(path string, handlers ...Handler) Router
+	BasePath() string
 }

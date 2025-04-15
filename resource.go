@@ -1,17 +1,31 @@
 package resource
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"path"
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/restk/openapi"
 	"github.com/restk/resource/access"
+	"github.com/restk/resource/pkg/pluralize"
 	"github.com/restk/resource/router"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"gorm.io/gorm"
+)
+
+var (
+	pluralizeClient = pluralize.NewClient()
+	caser           = cases.Title(language.English)
+	SchemaRegistry  = openapi.NewMapRegistry("#/components/schemas/", openapi.DefaultSchemaNamer)
 )
 
 type FieldQueryOperation string
@@ -22,6 +36,27 @@ var (
 	FieldQueryOperationGreaterThanEquals FieldQueryOperation = ">="
 	FieldQueryOperationLessThanEquals    FieldQueryOperation = "<="
 )
+
+// UserError is a custom error type that means this error will be shown to the user. The user gets a JSON containing
+// the code and the message instead of an InternalServerError.
+type UserError struct {
+	Code    int
+	Message string
+}
+
+func (e *UserError) Error() string {
+	return fmt.Sprintf("user error (code: %v, message: %v)", e.Code, e.Message)
+}
+
+// NewUserError is a custom error type that means this message will be sent to the user instead of an
+// InternalServerError (default behaviour.) You should return a UserError in hooks such as BeforeSave / AfterSave / etc
+// when you want the user to receive the error
+func NewUserError(code int, message string) error {
+	return &UserError{
+		Code:    code,
+		Message: message,
+	}
+}
 
 // S is used to easily craft JSON responses, see ResourceNotFound
 type S map[string]interface{}
@@ -34,8 +69,14 @@ var (
 		fmt.Println("internal server error", err)
 		c.WriteJSON(http.StatusInternalServerError, S{"code": 500, "message": "Internal Server Error"})
 	}
+	CustomUserError = func(c router.Context, userError *UserError) {
+		c.WriteJSON(http.StatusInternalServerError, S{"code": userError.Code, "message": userError.Message})
+	}
 	BadRequest = func(c router.Context) {
-		c.WriteJSON(http.StatusBadRequest, S{"code": 500, "message": "Invalid request"})
+		c.WriteJSON(http.StatusBadRequest, S{"code": 400, "message": "Invalid request"})
+	}
+	InvalidInput = func(c router.Context, msg string) {
+		c.WriteJSON(http.StatusBadRequest, S{"code": 400, "message": msg})
 	}
 	ForbiddenAccess = func(c router.Context) {
 		c.WriteJSON(http.StatusForbidden, S{"code": 407, "message": "Forbidden access to resource"})
@@ -44,22 +85,18 @@ var (
 
 type ResourceInterface interface {
 	Name() string
+	PluralName() string
 	PrimaryField() string
 	PrimaryFieldURLParam() string
 }
 
-// FieldIgnoreRole contains rules that
-type FieldIgnoreRule struct {
-	UnlessPermissionsAre []access.Permission
-	UnlessRolesAre       []string
+type Field struct {
+	Name        string
+	StructField reflect.StructField
 }
 
-type Field struct {
-	Name string
-	Type reflect.Type
-
-	Ignored     bool            // Ignored determines if this field is being ignored
-	IgnoreRules FieldIgnoreRule // FieldIgnoreRule contains rules for this field to be ignored
+type FieldIgnoreRule struct {
+	UnlessRoles []string
 }
 
 // Resource represents a single REST resource, such as /users. It seeks to auto generate all REST endpoints, API documentation, database fetching,
@@ -102,23 +139,23 @@ type Field struct {
 // 503 Service Unavailable - This indicates that something unexpected happened on server side (It can be anything like server overload, some parts of the system failed, etc.).
 type Resource[T any] struct {
 	name         string
-	singularName string // name in singular form, if name is 'keys' then this would 'key'. This should only be used for doc purposes
 	pluralName   string // name in plural form, if name is 'user', then this would be 'users'. This should only be used for doc purposes
+	tags         []string
 	primaryField string
-	validator    func(objectToValidate T) bool
+	// validator    func(objectToValidate T) bool
 	// hasAccess    func(c router.Context, resource string, action AccessAction) bool
 	hasOwnership func(c router.Context, resource string, obj *T) bool
 	getID        func(obj *T) any
 	table        interface{}
 	preload      []string
+	schema       *openapi.Schema
 
 	// fields
-	queryOperatorByField map[string]FieldQueryOperation
-	columnByField        map[string]string
-	fieldByJSON          map[string]string
-	// fieldByExists        map[string]bool
-
-	fields []*Field
+	fields                    []*Field
+	queryOperatorByField      map[string]FieldQueryOperation
+	columnByField             map[string]string
+	fieldByJSON               map[string]string
+	ignoredFieldsByPermission map[access.Permission]map[string]*FieldIgnoreRule
 
 	// hooks
 	beforeSave     map[access.Permission][]func(c router.Context, obj *T) error
@@ -155,30 +192,54 @@ type Resource[T any] struct {
 	disableDelete bool
 	disableList   bool
 
-	//
+	// docs
+	generateDocs bool
 
+	// other
+	maxInputBytes int64
 }
 
+// NewResource creates a new resource. Name is expected to be singular and we attempt to make it plural for doc purposes. To override the
+// plural name, call .Plural("")
 func NewResource[T any](name string, primaryField string) *Resource[T] {
 	var table T
 
+	pluralizedName := pluralizeClient.Pluralize(name, 0, false)
 	r := &Resource[T]{
-		name:         name,
-		primaryField: primaryField,
-		table:        table,
+		name:                      name,
+		pluralName:                pluralizedName,
+		primaryField:              primaryField,
+		table:                     table,
+		tags:                      []string{caser.String(pluralizedName)},
+		generateDocs:              true,
+		hasOwnership:              DefaultHasOwnership[T],
+		beforeSave:                make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
+		afterSave:                 make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
+		beforeDelete:              make([]func(c router.Context, obj *T) error, 0),
+		afterDelete:               make([]func(c router.Context, obj *T) error, 0),
+		beforeResponse:            make(map[access.Permission]func(c router.Context, obj *T) (interface{}, error), 0),
+		queryOperatorByField:      make(map[string]FieldQueryOperation, 0),
+		columnByField:             make(map[string]string, 0),
+		preload:                   make([]string, 0),
+		fields:                    make([]*Field, 0),
+		ignoredFieldsByPermission: make(map[access.Permission]map[string]*FieldIgnoreRule, 0),
+		pageSize:                  10,
+		maxPageSize:               250,
+		maxLimit:                  250,
+		maxInputBytes:             10 * 1024 * 1024,
+
 		// hasAccess:            DefaultHasAccess[T],
-		hasOwnership:         DefaultHasOwnership[T],
-		beforeSave:           make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
-		afterSave:            make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
-		beforeDelete:         make([]func(c router.Context, obj *T) error, 0),
-		afterDelete:          make([]func(c router.Context, obj *T) error, 0),
-		beforeResponse:       make(map[access.Permission]func(c router.Context, obj *T) (interface{}, error), 0),
-		queryOperatorByField: make(map[string]FieldQueryOperation, 0),
-		columnByField:        make(map[string]string, 0),
-		preload:              make([]string, 0),
-		pageSize:             10,
-		maxPageSize:          250,
-		maxLimit:             250,
+	}
+
+	typeOf := reflect.TypeOf(table)
+	visibleFields := reflect.VisibleFields(typeOf)
+	r.schema = openapi.SchemaFromType(SchemaRegistry, typeOf)
+
+	for _, field := range visibleFields {
+		r.fields = append(r.fields, &Field{
+			Name:        field.Name,
+			StructField: field,
+		})
 	}
 
 	if !r.isFieldNameValid(primaryField) {
@@ -191,6 +252,31 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 // Name returns the resource name.
 func (r *Resource[T]) Name() string {
 	return r.name
+}
+
+// PluralName returns the plural name.
+func (r *Resource[T]) PluralName() string {
+	return r.pluralName
+}
+
+// Plural is the plural name for this resource.
+func (r *Resource[T]) Plural(pluralName string) {
+	r.pluralName = pluralName
+}
+
+// ADdTag adds a tag
+func (r *Resource[T]) AddTag(tag string) {
+	r.tags = append(r.tags, tag)
+}
+
+// Tags replaces all tags
+func (r *Resource[T]) Tags(tags []string) {
+	r.tags = tags
+}
+
+// DisableDocs disables API doc generation for this specific resource.
+func (r *Resource[T]) DisableDocs() {
+	r.generateDocs = false
 }
 
 // PrimaryField returns the name of the primary field. The primary field is what is used for REST endpoints such as /users/:id (in this case, id, is the primary field)
@@ -242,12 +328,6 @@ func (r *Resource[T]) EnableACL(acl access.ACL, grantPermissionsOnCreate []acces
 	r.getID = f
 }
 
-// SetValidator sets the validator function for this object. The function passed is expected to return
-// true if the object passes all validation. If the object fails it, it expects to return false.
-func (r *Resource[T]) SetValidator(f func(objectToValidate T) bool) {
-	r.validator = f
-}
-
 // PrimaryFieldURLParam returns the URL param for the primary field. This must be unique across resources.
 func (r *Resource[T]) PrimaryFieldURLParam() string {
 	urlParam := r.name + strings.ToUpper(string(r.primaryField[0]))
@@ -283,6 +363,12 @@ func (r *Resource[T]) SetHasAccess(f func(c router.Context, resource string, act
 func (r *Resource[T]) BelongsTo(resource ResourceInterface, field string) {
 	r.belongsTo = resource
 	r.belongsToField = field
+
+	// first tag is automatically generated when a resource is created, if this resource belongs to another
+	// resource we add it to the belongs to resource tag instead.
+	if len(r.tags) > 0 {
+		r.tags[0] = caser.String(resource.PluralName())
+	}
 }
 
 // SetOwnsResource sets the function which checks if the resource is owned by the caller making the request.
@@ -348,13 +434,8 @@ func DefaultHasOwnership[T any](c router.Context, resource string, obj *T) bool 
 
 // isFieldNameValid checks if the field exists on the Resource[T]
 func (r *Resource[T]) isFieldNameValid(name string) bool {
-	var resource T
-
-	typeOf := reflect.TypeOf(resource)
-	fields := reflect.VisibleFields(typeOf)
-
-	for _, field := range fields {
-		if strings.EqualFold(field.Name, name) {
+	for _, field := range r.fields {
+		if strings.EqualFold(field.StructField.Name, name) {
 			return true
 		}
 	}
@@ -362,41 +443,78 @@ func (r *Resource[T]) isFieldNameValid(name string) bool {
 	return false
 }
 
-// IgnoreAllFields ignores all fields
+// IgnoreAllFields ignores all fields.
 func (r *Resource[T]) IgnoreAllFields() *Resource[T] {
-	for _, f := range r.fields {
-		f.Ignored = true
+	for _, field := range r.fields {
+		r.IgnoreField(field.Name, access.PermissionAll)
 	}
 
 	return r
 }
 
-// AllowAllFields allows all fields. note: by default all fields are already allowed unless you call Ignore methods.
-func (r *Resource[T]) AllowAllFields() *Resource[T] {
-	for _, f := range r.fields {
-		f.Ignored = false
+// AllowField will allow a field for a specific permission. By default Fields are allowed, call IgnoreAllFields() first.
+func (r *Resource[T]) AllowFields(fields []string, permissions []access.Permission) *Resource[T] {
+	for _, field := range fields {
+		r.AllowField(field, permissions)
 	}
 
 	return r
 }
 
-func (r *Resource[T]) AllowField(name string, accessMethod []access.Permission) *Resource[T] {
-	panic("not implemented")
+// AllowField will allow a field for a specific permission. By default Fields are allowed, call IgnoreAllFields() first.
+func (r *Resource[T]) AllowField(field string, permissions []access.Permission) *Resource[T] {
+	for _, permission := range permissions {
+		if ignoredFields, ok := r.ignoredFieldsByPermission[permission]; ok {
+			delete(ignoredFields, field)
+		}
+	}
+
+	return r
+}
+
+// IgnoreFields will ignore a list of fields for a specific permission. You can ignore a field for: access.PermissionRead, access.PermissionWrite, access.PermissionList, access.PermissionCreate
+func (r *Resource[T]) IgnoreFields(fields []string, accessMethod []access.Permission) *Resource[T] {
+	for _, field := range fields {
+		r.IgnoreFieldUnlessRole(field, accessMethod, []string{})
+	}
+
+	return r
 }
 
 // IgnoreField will ignore a field for a specific permission. You can ignore a field for: access.PermissionRead, access.PermissionWrite, access.PermissionList, access.PermissionCreate
-func (r *Resource[T]) IgnoreField(name string, accessMethod []access.Permission) *Resource[T] {
-	panic("not implemented")
+func (r *Resource[T]) IgnoreField(field string, accessMethod []access.Permission) *Resource[T] {
+	return r.IgnoreFieldUnlessRole(field, accessMethod, []string{})
+}
+
+// see: IgnoreFieldUnlessRole
+func (r *Resource[T]) IgnoreFieldsUnlessRole(fields []string, accessMethod []access.Permission, roles []string) *Resource[T] {
+	for _, field := range fields {
+		r.IgnoreFieldUnlessRole(field, accessMethod, roles)
+	}
+
+	return r
 }
 
 // IgnoreFieldUnlessRole will ignore the field for all operations unless the requester has the roles provided. This can allow specific fields, such as join fields, to be ignored
 // but they can still be updated by admins in tools.
-func (r *Resource[T]) IgnoreFieldUnlessRole(name string, accessMethod []access.Permission, roles []string) *Resource[T] {
-	panic("not implemented")
-}
+//
+// This requires rbac to be enabled, else this will ignore fields for all roles.
+func (r *Resource[T]) IgnoreFieldUnlessRole(field string, accessMethod []access.Permission, roles []string) *Resource[T] {
+	for _, permission := range accessMethod {
+		if _, ok := r.ignoredFieldsByPermission[permission]; !ok {
+			r.ignoredFieldsByPermission[permission] = make(map[string]*FieldIgnoreRule, 0)
+		}
+		ignoredFields := r.ignoredFieldsByPermission[permission]
+		if _, ok := ignoredFields[field]; ok {
+			return r
+		}
 
-func (r *Resource[T]) IgnoreAllFieldsUnlessRole(accessMethod []access.Permission, roles []string) *Resource[T] {
-	panic("not implemented")
+		ignoredFields[field] = &FieldIgnoreRule{
+			UnlessRoles: roles,
+		}
+	}
+
+	return r
 }
 
 // retrieveQueryFieldOperator retrieves the query operator for a field
@@ -416,7 +534,13 @@ func generateFieldByJSON(resource interface{}) map[string]string {
 	fields := reflect.VisibleFields(typeOf)
 
 	for _, field := range fields {
-		jsonTag := field.Tag.Get("json")
+		jsonTag := ""
+		if j := field.Tag.Get("json"); j != "" {
+			if n := strings.Split(j, ",")[0]; n != "" {
+				jsonTag = n
+			}
+		}
+
 		if jsonTag != "" {
 			fieldByJSON[jsonTag] = field.Name
 		}
@@ -491,6 +615,17 @@ func parseFieldFromParam(db *gorm.DB, param string, resource interface{}, field 
 		parsedValue = parsedIntValue
 	case reflect.String:
 		parsedValue = param
+	case reflect.Struct:
+		// If it's time.Time, parse the string into a time.Time
+		if gormField.StructField.Type == reflect.TypeOf(time.Time{}) {
+			parsedTime, err := time.Parse(time.RFC3339, param)
+			if err != nil {
+				return "", nil, errors.Wrapf(err, "failed to parse time param")
+			}
+			parsedValue = parsedTime
+		} else {
+			return "", nil, errors.Errorf("struct type not supported")
+		}
 	default:
 		// unhandled type
 		return "", nil, errors.Errorf("type not supported, if you are a developer, you can add a new type")
@@ -511,6 +646,32 @@ func (r *Resource[T]) tx(ctx router.Context) *gorm.DB {
 	panic("unable to find tx in context")
 }
 
+// omitIgnoredFields calls Omit on gorm to ignore fields.
+func (r *Resource[T]) omitIgnoredFields(ctx context.Context, permission access.Permission, table *gorm.DB) {
+	omitFields := []string{}
+	if ignoredFields, ok := r.ignoredFieldsByPermission[permission]; ok {
+		for fieldName, field := range ignoredFields {
+			hasException := false
+			if r.rbac != nil {
+				for _, role := range field.UnlessRoles {
+					if r.rbac.HasRole(ctx, role) {
+						hasException = true
+						break
+					}
+				}
+			}
+
+			if !hasException {
+				omitFields = append(omitFields, fieldName)
+			}
+		}
+	}
+
+	if len(omitFields) > 0 {
+		table.Omit(omitFields...)
+	}
+}
+
 // GenerateRESTAPI generates REST API endpoints for a resource. This also handles RBAC and makes sure the calling user has permission for an action on a resource.
 //
 // GET /resources                  -> returns an array of resources (with a max amount per page) and filters
@@ -525,7 +686,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	groupPath := ""
 	permissionName := r.name
 	if r.belongsTo != nil {
-		groupPath = "/" + r.belongsTo.Name() + "/:" + r.belongsTo.PrimaryFieldURLParam()
+		groupPath = path.Join("/", r.belongsTo.Name(), "/:"+r.belongsTo.PrimaryFieldURLParam())
 		permissionName = r.belongsTo.Name() + "-" + r.name
 	}
 
@@ -545,15 +706,34 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	r.fieldByJSON = fieldByJSON
 
 	if !r.disableList {
-		listPath := groupPath + "/" + r.name
-		listDoc := openAPI.Register(&openapi.Operation{
-			OperationID: "list" + r.name,
-			Method:      "GET",
-			Path:        listPath,
-		}).Summary("Gets a list of " + r.name).
-			Description("Get a list of " + r.name + " filtering via query params. This endpoint also supports pagination")
+		listPath := path.Join(groupPath, "/", r.pluralName)
 
-		listDoc.Request().QueryParam("id", r.name).Description("id of the resource")
+		if r.generateDocs {
+			listDoc := openAPI.Register(&openapi.Operation{
+				OperationID: "list" + r.name,
+				Method:      "GET",
+				Path:        path.Join(routes.BasePath(), listPath),
+				Tags:        r.tags,
+			}).Summary("Gets a list of " + r.pluralName).
+				Description("Get a list of " + r.pluralName + " filtering via query params. This endpoint also supports pagination")
+
+			for _, field := range r.fields {
+				if _, ok := r.ignoredFieldsByPermission[access.PermissionList][field.Name]; ok {
+					continue
+				}
+
+				name := field.Name
+				if j := field.StructField.Tag.Get("json"); j != "" {
+					if n := strings.Split(j, ",")[0]; n != "" {
+						name = n
+					}
+				}
+
+				if prop, ok := r.schema.Properties[name]; ok {
+					listDoc.Request().QueryParam(name, valueOfType(field.StructField.Type)).Description(prop.Description)
+				}
+			}
+		}
 
 		routes.GET(listPath, func(c router.Context) {
 			if r.rbac != nil {
@@ -604,10 +784,10 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			}
 
 			table := tx.Model(r.table)
+			r.omitIgnoredFields(c, access.PermissionList, table)
 
 			// if this is a grouped resource, we add the primary field of the resource this belongs to
 			if r.belongsTo != nil {
-
 				param := c.Param(r.belongsTo.PrimaryFieldURLParam())
 				columnForWhereClause, parsedValue, err := parseFieldFromParam(tx, param, resourceTypeForDoc, r.belongsToField)
 				if err != nil {
@@ -638,8 +818,11 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 					continue
 				}
 
+				// TODO: validate param based on `doc` tag, how do we call
+				// OpenAPI.Validate() on a single field?
 				column, parsedValue, err := parseFieldFromParam(tx, queryParams.Get(param), resourceTypeForDoc, field)
 				if err != nil {
+					InternalServerError(c, err)
 					continue
 				}
 
@@ -683,16 +866,20 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableRead {
-		getPath := groupPath + "/" + r.name + "/:" + r.PrimaryFieldURLParam()
-		getDoc := openAPI.Register(&openapi.Operation{
-			OperationID: "get" + r.name,
-			Method:      "GET",
-			Path:        getPath,
-		}).Summary("Returns a single " + r.name).
-			Description("Returns a single " + r.name + " by the primary id.")
+		getPath := path.Join(groupPath, "/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
+		if r.generateDocs {
+			getDoc := openAPI.Register(&openapi.Operation{
+				OperationID: "get" + r.name,
+				Method:      "GET",
+				Path:        path.Join(routes.BasePath(), getPath),
+				Tags:        r.tags,
+			}).Summary("Returns a single " + r.name).
+				Description("Returns a single " + r.name + " by the primary id.")
 
-		getDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Example("1").Required(true)
-		getDoc.Response(http.StatusOK).Body(resourceTypeForDoc)
+			getDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Example("1").Required(true)
+			getDoc.Response(http.StatusOK).Body(resourceTypeForDoc)
+
+		}
 
 		routes.GET(getPath, func(c router.Context) {
 			if r.rbac != nil {
@@ -723,12 +910,16 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			}
 
 			var resource T
-			query := tx.Model(r.table).Where(whereClauseQuery, whereClauseArgs...)
+			table := tx.Model(r.table)
+			r.omitIgnoredFields(c, access.PermissionRead, table)
+
+			query := table.Where(whereClauseQuery, whereClauseArgs...)
 			if len(r.preload) > 0 {
 				for _, preload := range r.preload {
 					query.Preload(preload)
 				}
 			}
+			r.omitIgnoredFields(c, access.PermissionList, query)
 
 			if err := query.First(&resource).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -755,6 +946,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if f, ok := r.beforeResponse[access.PermissionRead]; ok {
 				customResponse, err := f(c, &resource)
 				if err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -766,17 +963,20 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableCreate {
-		createPath := groupPath + "/" + r.name
-		createDoc := openAPI.Register(&openapi.Operation{
-			OperationID: "create" + r.name,
-			Method:      "PUT",
-			Path:        createPath,
-		}).Summary("Creates a new " + r.name).
-			Description("Creates a new " + r.name + ". If they already exist, this fails.")
+		createPath := path.Join(groupPath, "/", r.pluralName)
+		if r.generateDocs {
+			createDoc := openAPI.Register(&openapi.Operation{
+				OperationID: "create" + r.name,
+				Method:      "PUT",
+				Path:        path.Join(routes.BasePath(), createPath),
+				Tags:        r.tags,
+			}).Summary("Creates a new " + r.name).
+				Description("Creates a new " + r.name + ". If the resource already exist, this returns an error.")
 
-		createDoc.Request().Body(resourceTypeForDoc)
+			createDoc.Request().Body(resourceTypeForDoc)
+		}
 
-		routes.PUT(createPath, func(c router.Context) {
+		routes.POST(createPath, func(c router.Context) {
 			if r.rbac != nil {
 				if !r.rbac.HasPermission(c, permissionName, access.PermissionCreate) {
 					ForbiddenAccess(c)
@@ -785,8 +985,36 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			}
 
 			tx := r.tx(c)
+
+			defer c.Request().Body.Close()
+			lr := io.LimitReader(c.Request().Body, r.maxInputBytes)
+			body, err := io.ReadAll(lr)
+			if err != nil {
+				InternalServerError(c, err)
+			}
+
+			// we double unmarshal here because openapi.Validate() only works with
+			// map[string]any for validation
+			var resourceForValidation map[string]any
+			err = json.Unmarshal(body, &resourceForValidation)
+			if err != nil {
+				InternalServerError(c, err)
+				return
+			}
+
+			errs := r.Validate(resourceForValidation)
+			if len(errs) > 0 {
+				errStr := []string{}
+				for _, err := range errs {
+					errStr = append(errStr, err.Error())
+				}
+
+				InvalidInput(c, strings.Join(errStr, ","))
+				return
+			}
+
 			var resource *T
-			err := c.ReadJSON(&resource)
+			err = json.Unmarshal(body, &resource)
 			if err != nil {
 				InternalServerError(c, err)
 				return
@@ -795,14 +1023,22 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.beforeSave[access.PermissionCreate]; ok {
 				for _, beforeSaveFunc := range r.beforeSave[access.PermissionCreate] {
 					if err = beforeSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
 				}
 			}
 
-			// we can ignore each field that is not allowed to be updated via (db.Model(r.table).Omit("field_1")).Omit("field_2")..etc
-			if result := tx.Model(r.table).Create(&resource); result.Error != nil {
+			table := tx.Model(r.table)
+			r.omitIgnoredFields(c, access.PermissionCreate, table)
+
+			if result := table.Create(&resource); result.Error != nil {
 				InternalServerError(c, err)
 				return
 			}
@@ -814,6 +1050,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.afterSave[access.PermissionCreate]; ok {
 				for _, afterSaveFunc := range r.afterSave[access.PermissionCreate] {
 					if err = afterSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -823,6 +1065,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if f, ok := r.beforeResponse[access.PermissionCreate]; ok {
 				customResponse, err := f(c, resource)
 				if err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -834,16 +1082,19 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableUpdate {
-		updatePath := groupPath + "/" + r.name + "/:" + r.PrimaryFieldURLParam()
-		updateDoc := openAPI.Register(&openapi.Operation{
-			OperationID: "update" + r.name,
-			Method:      "PUT",
-			Path:        updatePath,
-		}).Summary("Updates a single " + r.name).
-			Description("Updates a single " + r.name + ".")
+		updatePath := path.Join(groupPath, "/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
+		if r.generateDocs {
+			updateDoc := openAPI.Register(&openapi.Operation{
+				OperationID: "update" + r.name,
+				Method:      "PUT",
+				Path:        path.Join(routes.BasePath(), updatePath),
+				Tags:        r.tags,
+			}).Summary("Updates a single " + r.name).
+				Description("Updates a single " + r.name + ".")
 
-		updateDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
-		updateDoc.Request().Body(resourceTypeForDoc)
+			updateDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
+			updateDoc.Request().Body(resourceTypeForDoc)
+		}
 
 		routes.PUT(updatePath, func(c router.Context) {
 			if r.rbac != nil {
@@ -853,8 +1104,35 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				}
 			}
 
+			defer c.Request().Body.Close()
+			lr := io.LimitReader(c.Request().Body, r.maxInputBytes)
+			body, err := io.ReadAll(lr)
+			if err != nil {
+				InternalServerError(c, err)
+			}
+
+			// we double unmarshal here because openapi.Validate() only works with
+			// map[string]any for validation
+			var resourceForValidation map[string]any
+			err = json.Unmarshal(body, &resourceForValidation)
+			if err != nil {
+				InternalServerError(c, err)
+				return
+			}
+
+			errs := r.Validate(resourceForValidation)
+			if len(errs) > 0 {
+				errStr := []string{}
+				for _, err := range errs {
+					errStr = append(errStr, err.Error())
+				}
+
+				InvalidInput(c, strings.Join(errStr, ","))
+				return
+			}
+
 			var resource *T
-			err := c.ReadJSON(&resource)
+			err = json.Unmarshal(body, &resource)
 			if err != nil {
 				InternalServerError(c, err)
 				return
@@ -870,6 +1148,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.beforeSave[access.PermissionUpdate]; ok {
 				for _, beforeSaveFunc := range r.beforeSave[access.PermissionUpdate] {
 					if err = beforeSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -884,6 +1168,9 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			whereClauseQuery = fmt.Sprintf("%v = ?", r.primaryField)
 			whereClauseArgs = append(whereClauseArgs, primaryFieldValue)
 
+			table := tx.Model(r.table)
+			r.omitIgnoredFields(c, access.PermissionUpdate, table)
+
 			if r.belongsTo != nil {
 				param := c.Param(r.belongsTo.PrimaryFieldURLParam())
 				columnForWhereClause, parsedValue, err := parseFieldFromParam(tx, param, resourceTypeForDoc, r.belongsToField)
@@ -896,7 +1183,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				whereClauseArgs = append(whereClauseArgs, parsedValue)
 			}
 
-			if result := tx.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).Save(&resource); result.Error != nil {
+			if result := table.Where(whereClauseQuery, whereClauseArgs...).Save(&resource); result.Error != nil {
 				InternalServerError(c, err)
 				return
 			}
@@ -904,6 +1191,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.afterSave[access.PermissionUpdate]; ok {
 				for _, afterSaveFunc := range r.afterSave[access.PermissionCreate] {
 					if err = afterSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -913,6 +1206,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if f, ok := r.beforeResponse[access.PermissionUpdate]; ok {
 				customResponse, err := f(c, resource)
 				if err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -925,16 +1224,20 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableUpdate {
-		patchPath := groupPath + "/" + r.name + "/:" + r.PrimaryFieldURLParam()
-		patchDoc := openAPI.Register(&openapi.Operation{
-			OperationID: "patch" + r.name,
-			Method:      "PATCH",
-			Path:        patchPath,
-		}).Summary("Patches a single " + r.name).
-			Description("Patches a single " + r.name + ".")
+		patchPath := path.Join(groupPath, "/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
 
-		patchDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
-		patchDoc.Request().Body(resourceTypeForDoc)
+		if r.generateDocs {
+			patchDoc := openAPI.Register(&openapi.Operation{
+				OperationID: "patch" + r.name,
+				Method:      "PATCH",
+				Path:        path.Join(routes.BasePath(), patchPath),
+				Tags:        r.tags,
+			}).Summary("Patches a single " + r.name).
+				Description("Patches a single " + r.name + ".")
+
+			patchDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
+			patchDoc.Request().Body(resourceTypeForDoc)
+		}
 
 		routes.PATCH(patchPath, func(c router.Context) {
 			if r.rbac != nil {
@@ -944,8 +1247,35 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				}
 			}
 
+			defer c.Request().Body.Close()
+			lr := io.LimitReader(c.Request().Body, r.maxInputBytes)
+			body, err := io.ReadAll(lr)
+			if err != nil {
+				InternalServerError(c, err)
+			}
+
+			// we double unmarshal here because openapi.Validate() only works with
+			// map[string]any for validation
+			var resourceForValidation map[string]any
+			err = json.Unmarshal(body, &resourceForValidation)
+			if err != nil {
+				InternalServerError(c, err)
+				return
+			}
+
+			errs := r.Validate(resourceForValidation)
+			if len(errs) > 0 {
+				errStr := []string{}
+				for _, err := range errs {
+					errStr = append(errStr, err.Error())
+				}
+
+				InvalidInput(c, strings.Join(errStr, ","))
+				return
+			}
+
 			var resource *T
-			err := c.ReadJSON(&resource)
+			err = json.Unmarshal(body, &resource)
 			if err != nil {
 				InternalServerError(c, err)
 				return
@@ -961,6 +1291,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.beforeSave[access.PermissionUpdate]; ok {
 				for _, beforeSaveFunc := range r.beforeSave[access.PermissionUpdate] {
 					if err = beforeSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -986,7 +1322,10 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				whereClauseQuery = fmt.Sprintf("%v = ? AND %v = ?", r.primaryField, columnForWhereClause)
 				whereClauseArgs = append(whereClauseArgs, parsedValue)
 			}
-			if result := tx.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).Updates(&resource); result.Error != nil {
+			table := tx.Model(r.table)
+			r.omitIgnoredFields(c, access.PermissionUpdate, table)
+
+			if result := table.Where(whereClauseQuery, whereClauseArgs...).Updates(&resource); result.Error != nil {
 				InternalServerError(c, err)
 				return
 			}
@@ -994,6 +1333,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if _, ok := r.afterSave[access.PermissionUpdate]; ok {
 				for _, afterSaveFunc := range r.afterSave[access.PermissionCreate] {
 					if err = afterSaveFunc(c, resource); err != nil {
+						var userError *UserError
+						if errors.As(err, &userError) {
+							CustomUserError(c, userError)
+							return
+						}
+
 						InternalServerError(c, err)
 						return
 					}
@@ -1003,6 +1348,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if f, ok := r.beforeResponse[access.PermissionUpdate]; ok {
 				customResponse, err := f(c, resource)
 				if err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -1014,14 +1365,17 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	}
 
 	if !r.disableDelete {
-		deletePath := groupPath + "/" + r.name + "/:" + r.PrimaryFieldURLParam()
-		deleteDoc := openAPI.Register(&openapi.Operation{
-			OperationID: "delete" + r.name,
-			Method:      "DELETE",
-			Path:        deletePath,
-		}).Summary("Deletes a single " + r.name).
-			Description("Deletes a single " + r.name + ".")
-		deleteDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
+		deletePath := path.Join(groupPath+"/", r.pluralName, "/:"+r.PrimaryFieldURLParam())
+		if r.generateDocs {
+			deleteDoc := openAPI.Register(&openapi.Operation{
+				OperationID: "delete" + r.name,
+				Method:      "DELETE",
+				Path:        path.Join(routes.BasePath(), deletePath),
+				Tags:        r.tags,
+			}).Summary("Deletes a single " + r.name).
+				Description("Deletes a single " + r.name + ".")
+			deleteDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
+		}
 
 		routes.DELETE(deletePath, func(c router.Context) {
 			if r.rbac != nil {
@@ -1072,6 +1426,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			for _, beforeDeleteFunc := range r.beforeDelete {
 				if err = beforeDeleteFunc(c, resource); err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -1090,6 +1450,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			for _, afterDeleteFunc := range r.afterDelete {
 				if err = afterDeleteFunc(c, resource); err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -1098,6 +1464,12 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			if f, ok := r.beforeResponse[access.PermissionDelete]; ok {
 				customResponse, err := f(c, resource)
 				if err != nil {
+					var userError *UserError
+					if errors.As(err, &userError) {
+						CustomUserError(c, userError)
+						return
+					}
+
 					InternalServerError(c, err)
 					return
 				}
@@ -1136,6 +1508,24 @@ func (r *Resource[T]) DELETE(f func(c router.Context)) {
 	r.delete = f
 }
 
+// Disable disables a list of access methods
+func (r *Resource[T]) Disable(permissions []access.Permission) {
+	for _, permission := range permissions {
+		switch permission {
+		case access.PermissionCreate:
+			r.DisableCreate()
+		case access.PermissionRead:
+			r.DisableRead()
+		case access.PermissionUpdate:
+			r.DisableUpdate()
+		case access.PermissionDelete:
+			r.DisableDelete()
+		case access.PermissionList:
+			r.DisableList()
+		}
+	}
+}
+
 // DisableCreate disables creation on this resource
 func (r *Resource[T]) DisableCreate() {
 	r.disableCreate = true
@@ -1159,4 +1549,26 @@ func (r *Resource[T]) DisableDelete() {
 // DisableList disables listing on this resource
 func (r *Resource[T]) DisableList() {
 	r.disableList = true
+}
+
+// Validate validates that the value v is a valid resource
+func (r *Resource[T]) Validate(v any) []error {
+	pb := openapi.NewPathBuffer([]byte(""), 0)
+	res := &openapi.ValidateResult{}
+	openapi.Validate(SchemaRegistry, r.schema, pb, openapi.ModeWriteToServer, v, res)
+
+	return res.Errors
+}
+
+// MaxInputBytes sets the maximum bytes when reading a resource from a client, by default
+// this is 10MB
+func (r *Resource[T]) MaxInputBytes(maxInputBytes int64) {
+	r.maxInputBytes = maxInputBytes
+}
+
+func valueOfType(t reflect.Type) interface{} {
+	if t.Kind() == reflect.Ptr {
+		return reflect.New(t.Elem()).Interface()
+	}
+	return reflect.New(t).Interface()
 }
