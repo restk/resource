@@ -272,12 +272,12 @@ func (r *Resource[T]) Plural(pluralName string) {
 	r.pluralName = pluralName
 }
 
-// ADdTag adds a tag
+// AddTag adds a tag
 func (r *Resource[T]) AddTag(tag string) {
 	r.tags = append(r.tags, tag)
 }
 
-// Tags replaces all tags
+// Tags replaces all tags, see AddTag to add a single tag.
 func (r *Resource[T]) Tags(tags []string) {
 	r.tags = tags
 }
