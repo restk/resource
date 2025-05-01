@@ -12,6 +12,7 @@ type (
 		WriteJSON(code int, v interface{})
 		ReadJSON(v interface{}) error
 		Request() *http.Request
+		Writer() http.ResponseWriter
 		SetSameSite(sameSite http.SameSite)
 		Cookie(name string) (string, error)
 		SetCookie(name string, value string, maxAge int, path string, domain string, secure bool, httpOnly bool)
@@ -50,6 +51,7 @@ func (m *MockContext) QueryParams() QueryParams           { return nil }
 func (m *MockContext) WriteJSON(code int, v interface{})  {}
 func (m *MockContext) ReadJSON(v interface{}) error       { return nil }
 func (m *MockContext) Request() *http.Request             { return nil }
+func (m *MockContext) Writer() http.ResponseWriter        { return nil }
 func (m *MockContext) SetSameSite(sameSite http.SameSite) {}
 func (m *MockContext) Cookie(name string) (string, error) { return "", nil }
 func (m *MockContext) SetCookie(name string, value string, maxAge int, path string, domain string, secure bool, httpOnly bool) {

@@ -58,6 +58,10 @@ func (c *Context) Request() *http.Request {
 	return c.ginContext.Request
 }
 
+func (c *Context) Writer() http.ResponseWriter {
+	return c.ginContext.Writer
+}
+
 func (c *Context) QueryParams() router.QueryParams {
 	return &QueryParams{
 		ginContext: c.ginContext,

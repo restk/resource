@@ -68,6 +68,10 @@ func (c *Context) Request() *http.Request {
 	return c.chiRequest
 }
 
+func (c *Context) Writer() http.ResponseWriter {
+	return c.chiResponseWriter
+}
+
 func (c *Context) QueryParams() router.QueryParams {
 	return &QueryParams{
 		chiRequest: c.chiRequest,
