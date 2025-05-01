@@ -13,7 +13,7 @@ func GinContext(r router.Context) *gin.Context {
 
 	rc, ok := impl.(*gin.Context)
 	if !ok {
-		panic("c is not a gin context")
+		panic("ctx is not a gin context")
 	}
 
 	return rc
@@ -69,7 +69,7 @@ func (c *Context) Param(key string) string {
 }
 
 func (c *Context) WriteJSON(code int, v interface{}) {
-	c.ginContext.IndentedJSON(code, v)
+	c.ginContext.JSON(code, v)
 }
 
 func (c *Context) ReadJSON(v interface{}) error {

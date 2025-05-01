@@ -10,7 +10,7 @@ var (
 	PermissionList   Permission = "list"
 )
 
-var PermissionAll []Permission = []Permission{
+var PermissionAll = []Permission{
 	PermissionCreate,
 	PermissionRead,
 	PermissionUpdate,

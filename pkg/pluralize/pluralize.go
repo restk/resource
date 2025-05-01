@@ -142,7 +142,7 @@ func (c *Client) AddIrregularRule(single string, plural string) {
 func (c *Client) replaceWord(replaceMap map[string]string, keepMap map[string]string, rules []Rule) func(w string) string { //nolint:lll
 	f := func(word string) string {
 		// Get the correct token and case restoration functions.
-		var token = strings.ToLower(word)
+		token := strings.ToLower(word)
 
 		// Check against the keep object map.
 		if _, ok := keepMap[token]; ok {
@@ -163,7 +163,7 @@ func (c *Client) replaceWord(replaceMap map[string]string, keepMap map[string]st
 
 func (c *Client) checkWord(replaceMap map[string]string, keepMap map[string]string, rules []Rule) func(w string) bool {
 	f := func(word string) bool {
-		var token = strings.ToLower(word)
+		token := strings.ToLower(word)
 
 		if _, ok := keepMap[token]; ok {
 			return true
@@ -268,8 +268,8 @@ func isExpr(s string) bool {
 	return s[:1] == `(`
 }
 
-func (c *Client) loadIrregularRules() { //nolint:funlen
-	var irregularRules = []struct {
+func (c *Client) loadIrregularRules() {
+	irregularRules := []struct {
 		single string
 		plural string
 	}{
@@ -339,7 +339,7 @@ func (c *Client) loadIrregularRules() { //nolint:funlen
 }
 
 func (c *Client) loadPluralizationRules() {
-	var pluralizationRules = []struct {
+	pluralizationRules := []struct {
 		rule        string
 		replacement string
 	}{
@@ -376,7 +376,7 @@ func (c *Client) loadPluralizationRules() {
 }
 
 func (c *Client) loadSingularizationRules() {
-	var singularizationRules = []struct {
+	singularizationRules := []struct {
 		rule        string
 		replacement string
 	}{
@@ -412,7 +412,7 @@ func (c *Client) loadSingularizationRules() {
 }
 
 func (c *Client) loadUncountableRules() { //nolint:funlen
-	var uncountableRules = []string{
+	uncountableRules := []string{
 		// Singular words with no plurals.
 		`adulthood`,
 		`advice`,

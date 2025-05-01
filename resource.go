@@ -50,7 +50,7 @@ func (e *UserError) Error() string {
 
 // NewUserError is a custom error type that means this message will be sent to the user instead of an
 // InternalServerError (default behaviour.) You should return a UserError in hooks such as BeforeSave / AfterSave / etc
-// when you want the user to receive the error
+// when you want the user to receive the error.
 func NewUserError(code int, message string) error {
 	return &UserError{
 		Code:    code,
@@ -58,7 +58,7 @@ func NewUserError(code int, message string) error {
 	}
 }
 
-// S is used to easily craft JSON responses, see ResourceNotFound
+// S is used to easily craft JSON responses, see ResourceNotFound.
 type S map[string]any
 
 var (
@@ -201,8 +201,8 @@ type Resource[T any] struct {
 	txContextKey  string
 }
 
-// NewResource creates a new resource. Name is expected to be singular and we attempt to make it plural for doc purposes. To override the
-// plural name, call .Plural("")
+// NewResource creates a new resource. Name is expected to be singular and we attempt to make it plural for doc purposes
+// . To override the plural name, call .Plural("").
 func NewResource[T any](name string, primaryField string) *Resource[T] {
 	var table T
 
@@ -272,7 +272,7 @@ func (r *Resource[T]) Plural(pluralName string) {
 	r.pluralName = pluralName
 }
 
-// AddTag adds a tag
+// AddTag adds a tag.
 func (r *Resource[T]) AddTag(tag string) {
 	r.tags = append(r.tags, tag)
 }
@@ -287,7 +287,7 @@ func (r *Resource[T]) DisableDocs() {
 	r.generateDocs = false
 }
 
-// PrimaryField returns the name of the primary field. The primary field is what is used for REST endpoints such as /users/:id (in this case, id, is the primary field)
+// PrimaryField returns the name of the primary field. The primary field is what is used for REST endpoints such as /users/:id (in this case, id, is the primary field).
 func (r *Resource[T]) PrimaryField() string {
 	return r.primaryField
 }
@@ -386,9 +386,9 @@ func (r *Resource[T]) SetHasOwnership(f func(c router.Context, resource string, 
 
 // Preload loads a resources associations. For example:
 //
-// Preload("Organization.Roles", "Keys") would load User.Organization, User.Organization.Roles and User.Keys
-func (f *Resource[T]) Preload(association ...string) {
-	f.preload = append(f.preload, association...)
+// Preload("Organization.Roles", "Keys") would load User.Organization, User.Organization.Roles and User.Keys.
+func (r *Resource[T]) Preload(association ...string) {
+	r.preload = append(r.preload, association...)
 }
 
 // BeforeSave adds a function that will be called before a save of a Resource. You can add multiple functions.
@@ -424,23 +424,17 @@ func (r *Resource[T]) AfterDelete(f func(c router.Context, obj *T) error) {
 	r.afterDelete = append(r.afterDelete, f)
 }
 
-// SetFieldOperation sets the field operation when doing a search query. The field is the name of the struct field (exact name including capital)
-//
-//	By default all fields use an equal operator and we recommend only adding fields that do not search by a plain equal operator.
-//
-// Resource[schema.User].SetFieldQueryOperation("Name", FieldOperationLike)
-// Resource[schema.User].SetFieldQueryOperation("StartTime", FieldOperationGreaterThanEqual)
-// Resource[schema.User].SetFieldQueryOperation("EndTime", FieldOperationLessThanEqual)
+// Resource[schema.User].SetFieldQueryOperation("EndTime", FieldOperationLessThanEqual).
 func (r *Resource[T]) SetFieldQueryOperation(field string, op FieldQueryOperation) {
 	r.queryOperatorByField[field] = op
 }
 
-// DefaultHasOwnership returns true by default and does not handle ownership. Call SetHasOwnership() to add ownership
+// DefaultHasOwnership returns true by default and does not handle ownership. Call SetHasOwnership() to add ownership.
 func DefaultHasOwnership[T any](c router.Context, resource string, obj *T) bool {
 	return true
 }
 
-// isFieldNameValid checks if the field exists on the Resource[T]
+// isFieldNameValid checks if the field exists on the Resource[T].
 func (r *Resource[T]) isFieldNameValid(name string) bool {
 	for _, field := range r.fields {
 		if strings.EqualFold(field.StructField.Name, name) {
@@ -460,7 +454,8 @@ func (r *Resource[T]) IgnoreAllFields() *Resource[T] {
 	return r
 }
 
-// AllowField will allow a field for a specific permission. By default Fields are allowed, call IgnoreAllFields() first.
+// AllowFields will allow the given fields for a specific permission. By default all fields are allowed, call
+// IgnoreAllFields() first.
 func (r *Resource[T]) AllowFields(fields []string, permissions []access.Permission) *Resource[T] {
 	for _, field := range fields {
 		r.AllowField(field, permissions)
@@ -480,7 +475,7 @@ func (r *Resource[T]) AllowField(field string, permissions []access.Permission) 
 	return r
 }
 
-// IgnoreFields will ignore a list of fields for a specific permission. You can ignore a field for: access.PermissionRead, access.PermissionWrite, access.PermissionList, access.PermissionCreate
+// IgnoreFields will ignore a list of fields for a specific permission. You can ignore a field for: access.PermissionRead, access.PermissionWrite, access.PermissionList, access.PermissionCreate.
 func (r *Resource[T]) IgnoreFields(fields []string, accessMethod []access.Permission) *Resource[T] {
 	for _, field := range fields {
 		r.IgnoreFieldUnlessRole(field, accessMethod, []string{})
@@ -489,7 +484,7 @@ func (r *Resource[T]) IgnoreFields(fields []string, accessMethod []access.Permis
 	return r
 }
 
-// IgnoreField will ignore a field for a specific permission. You can ignore a field for: access.PermissionRead, access.PermissionWrite, access.PermissionList, access.PermissionCreate
+// IgnoreField will ignore a field for a specific permission. You can ignore a field for: access.PermissionRead, access.PermissionWrite, access.PermissionList, access.PermissionCreate.
 func (r *Resource[T]) IgnoreField(field string, accessMethod []access.Permission) *Resource[T] {
 	return r.IgnoreFieldUnlessRole(field, accessMethod, []string{})
 }
@@ -525,16 +520,16 @@ func (r *Resource[T]) IgnoreFieldUnlessRole(field string, accessMethod []access.
 	return r
 }
 
-// retrieveQueryFieldOperator retrieves the query operator for a field
+// retrieveQueryFieldOperator retrieves the query operator for a field.
 func (r *Resource[T]) retrieveQueryFieldOperator(field string) string {
 	if op, ok := r.queryOperatorByField[field]; ok {
 		return string(op)
-	} else {
-		return string(FieldQueryOperationEquals)
 	}
+
+	return string(FieldQueryOperationEquals)
 }
 
-// fieldByJSON returns a field name by its JSON tag
+// generateFieldByJSON returns a field name by its JSON tag.
 func generateFieldByJSON(resource any) map[string]string {
 	fieldByJSON := make(map[string]string)
 
@@ -557,7 +552,7 @@ func generateFieldByJSON(resource any) map[string]string {
 	return fieldByJSON
 }
 
-// generateColumnNameByField generates a mapping (field -> column name) for a resource T
+// generateColumnByField generates a mapping (field -> column name) for a resource T.
 func generateColumnByField(db *gorm.DB, resource any) (map[string]string, error) {
 	columnByField := make(map[string]string, 0)
 
@@ -580,7 +575,6 @@ func generateColumnByField(db *gorm.DB, resource any) (map[string]string, error)
 			return nil, errors.Errorf("failed to find field " + field.Name)
 		}
 		columnByField[field.Name] = gormField.DBName
-
 	}
 
 	return columnByField, nil
@@ -642,20 +636,21 @@ func parseFieldFromParam(db *gorm.DB, param string, resource any, field string) 
 	return columnForWhereClause, parsedValue, nil
 }
 
-// TxContextKey overrides the transaction key used for queries, by default this is "gorm_tx"
+// TxContextKey overrides the transaction key used for queries, by default this is "gorm_tx".
 func (r *Resource[T]) TxContextKey(txKey string) {
 	r.txContextKey = txKey
 }
 
-// Tx returns a transaction from the resource or panics
-// TODO: when implementing the generic model interface, we should have ways for the user to determine where the tx comes from instead of hard pulling it from the context
+// tx returns a transaction from the resource or panics.
 func (r *Resource[T]) tx(ctx router.Context) *gorm.DB {
+	// TODO: when implementing the generic model interface, we should have ways for the user to determine where the tx
+	// comes from instead of hard pulling it from the context.
 	val := ctx.Value(r.txContextKey)
 	if tx, ok := val.(*gorm.DB); ok {
 		return tx
 	}
 
-	// not being able to find a transaction inside the context is a critical error and everything should stop
+	// Not being able to find a transaction inside the context is a critical error and everything should stop.
 	panic("unable to find tx in context")
 }
 
@@ -685,15 +680,8 @@ func (r *Resource[T]) omitIgnoredFields(ctx context.Context, permission access.P
 	}
 }
 
-// GenerateRESTAPI generates REST API endpoints for a resource. This also handles RBAC and makes sure the calling user has permission for an action on a resource.
-//
-// GET /resources                   -> returns a paginated list of resources (with a max amount per page) and filters
-// GET /resources/:primaryField     -> returns a single resource by the primary field
-// POST /resources                  -> creates a single resource
-// PUT /resources/:primaryField     -> updates a single resource by its primary field
-// PATCH /resources/:primaryField   -> patches a single resource by its primary field
-// DELETE /resources/:primaryField  -> deletes a single resource by its primary field
-func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAPI *openapi.Builder) error {
+// DELETE /resources/:primaryField  -> deletes a single resource by its primary field.
+func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI *openapi.Builder) error {
 	// generate column names
 	// TODO: add a storage interface instead of using gorm directly so Resource can be used for any other storage medium
 	groupPath := ""
@@ -709,7 +697,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	var resourceTypeForDoc *T
 	var resource T
 
-	columnByField, err := generateColumnByField(dbb, resource)
+	columnByField, err := generateColumnByField(db, resource)
 	if err != nil {
 		return err
 	}
@@ -762,7 +750,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			var page int
 			var pageSize int
 			var pageOffset int
-			var paginationIsEnabled bool = false
+			paginationIsEnabled := false
 
 			if queryParams.Has("page") && queryParams.Has("page_size") {
 				page, _ = strconv.Atoi(queryParams.Get("page"))
@@ -785,7 +773,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			var limit int
 			var offset int
-			var limitOffsetEnabled bool = false
+			limitOffsetEnabled := false
 
 			if queryParams.Has("limit") && queryParams.Has("offset") {
 				limit, _ = strconv.Atoi(queryParams.Get("limit"))
@@ -817,13 +805,15 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				}
 			}
 
-			// We take the query params from a request such as /resource?id=1&name="%a%" and translate it to a gorm Where clause. We also validate
-			// that the query params are actual fields on the resource to prevent users from injecting SQL in query params.
+			// We take the query params from a request such as /resource?id=1&name="%a%" and translate it to a gorm
+			// Where clause. We also validate that the query params are actual fields on the resource to prevent users
+			// from injecting SQL in query params.
 			for _, param := range queryParams.Keys() {
-				// We support lookups by the Field name or the JSON tag, first we attempt JSON
+				// We support lookups by the Field name or the JSON tag, first we attempt JSON.
 				field, ok := r.fieldByJSON[param]
 				if !ok {
-					// We then attempt the original param which we assume is a Field instead of a JSON tag (validated below.)
+					// We then attempt the original param which we assume is a Field instead of a JSON tag
+					// (validated below.)
 					field = param
 				}
 
@@ -843,7 +833,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 				table = table.Where(fmt.Sprintf("%v %v ?", column, queryOperator), parsedValue)
 			}
 
-			// set a global limit if the user does not specifiy pagination or limit offset.
+			// Set a global limit if the user does not specify pagination or limit offset.
 			table.Limit(r.maxLimit)
 
 			if paginationIsEnabled {
@@ -855,7 +845,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			var ids []any
 
-			// If ACL is enabled for this resource, restrict the returned results to the resources we have access to
+			// If ACL is enabled for this resource, restrict the returned results to the resources we have access to.
 			if r.acl != nil {
 				ids = r.acl.GetIDsWithReadPermission(c, permissionName)
 				if len(ids) == 0 {
@@ -891,7 +881,6 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 
 			getDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Example("1").Required(true)
 			getDoc.Response(http.StatusOK).Body(resourceTypeForDoc)
-
 		}
 
 		routes.GET(getPath, func(c router.Context) {
@@ -1057,7 +1046,10 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			}
 
 			if r.acl != nil {
-				r.acl.GrantPermissions(c, r.name, r.getID(resource), r.aclGrantPermissions)
+				if err = r.acl.GrantPermissions(c, r.name, r.getID(resource), r.aclGrantPermissions); err != nil {
+					InternalServerError(c, err)
+					return
+				}
 			}
 
 			if _, ok := r.afterSave[access.PermissionCreate]; ok {
@@ -1232,7 +1224,6 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			} else {
 				c.WriteJSON(http.StatusOK, resource)
 			}
-
 		})
 	}
 
@@ -1451,7 +1442,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 			}
 
 			var deletedResource *T
-			if err := tx.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).Delete(&deletedResource).Error; err != nil {
+			if err = tx.Model(r.table).Where(whereClauseQuery, whereClauseArgs...).Delete(&deletedResource).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					ResourceNotFound(c)
 					return
@@ -1496,17 +1487,17 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, dbb *gorm.DB, openAP
 	return nil
 }
 
-// GET overrides the GET method with f
+// GET overrides the GET method with f.
 func (r *Resource[T]) GET(f func(c router.Context)) {
 	r.get = f
 }
 
-// POST overrides the POST method with f
+// POST overrides the POST method with f.
 func (r *Resource[T]) POST(f func(c router.Context)) {
 	r.post = f
 }
 
-// PUT overrides the PUT method with f
+// PUT overrides the PUT method with f.
 func (r *Resource[T]) PUT(f func(c router.Context)) {
 	r.put = f
 }
@@ -1516,12 +1507,12 @@ func (r *Resource[T]) PATCH(f func(c router.Context)) {
 	r.patch = f
 }
 
-// DELETE overrides the DELETE method with f
+// DELETE overrides the DELETE method with f.
 func (r *Resource[T]) DELETE(f func(c router.Context)) {
 	r.delete = f
 }
 
-// Disable disables a list of access methods
+// Disable disables a list of access methods.
 func (r *Resource[T]) Disable(permissions []access.Permission) {
 	for _, permission := range permissions {
 		switch permission {
@@ -1539,32 +1530,32 @@ func (r *Resource[T]) Disable(permissions []access.Permission) {
 	}
 }
 
-// DisableCreate disables creation on this resource
+// DisableCreate disables creation on this resource.
 func (r *Resource[T]) DisableCreate() {
 	r.disableCreate = true
 }
 
-// DisableRead disables reads on this resource
+// DisableRead disables reads on this resource.
 func (r *Resource[T]) DisableRead() {
 	r.disableRead = true
 }
 
-// DisableUpdate disables updates on this resource
+// DisableUpdate disables updates on this resource.
 func (r *Resource[T]) DisableUpdate() {
 	r.disableUpdate = true
 }
 
-// DisableDelete disables deletes on this resource
+// DisableDelete disables deletes on this resource.
 func (r *Resource[T]) DisableDelete() {
 	r.disableDelete = true
 }
 
-// DisableList disables listing on this resource
+// DisableList disables listing on this resource.
 func (r *Resource[T]) DisableList() {
 	r.disableList = true
 }
 
-// IsValid validates that the value v is a valid resource
+// IsValid validates that the value v is a valid resource.
 func (r *Resource[T]) IsValid(v any) []error {
 	pb := openapi.NewPathBuffer([]byte(""), 0)
 	res := &openapi.ValidateResult{}
@@ -1573,8 +1564,7 @@ func (r *Resource[T]) IsValid(v any) []error {
 	return res.Errors
 }
 
-// MaxInputBytes sets the maximum bytes when reading a resource from a client, by default
-// this is 10MB
+// MaxInputBytes sets the maximum bytes when reading a resource from a client. 10MB by default.
 func (r *Resource[T]) MaxInputBytes(maxInputBytes int64) {
 	r.maxInputBytes = maxInputBytes
 }
