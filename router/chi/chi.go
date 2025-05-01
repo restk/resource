@@ -142,18 +142,29 @@ var (
 	cookieOptionsMutex sync.RWMutex
 )
 
+// SetSameSite sets the SameSite cookie attribute value for all cookies that will be set on this response.
+// This allows for setting the SameSite policy once and having it apply to all cookies.
 func (c *Context) SetSameSite(sameSite http.SameSite) {
+	// Get the memory address of the underlying Chi response writer using reflection.
+	// This address is used as a key in the map to associate cookie options with this specific response.
 	responseWriterAddr := reflect.ValueOf(c.chiResponseWriter).Pointer()
 
+	// Acquire a lock on the mutex to ensure thread-safety when accessing the shared map.
+	// This prevents race conditions in concurrent requests.
 	cookieOptionsMutex.Lock()
-	defer cookieOptionsMutex.Unlock()
+	defer cookieOptionsMutex.Unlock() // Ensure the mutex is unlocked when the function returns
 
+	// Check if we already have cookie options for this response writer.
 	options, exists := cookieOptionsMap[responseWriterAddr]
 	if !exists {
+		// If no options exist yet, create a new options object and store it in the map using the response writer's
+		// address as the key.
 		options = &cookieOptions{}
 		cookieOptionsMap[responseWriterAddr] = options
 	}
 
+	// Set the SameSite attribute on the options object.
+	// This will be used later when setting cookies on this response.
 	options.sameSite = sameSite
 }
 
