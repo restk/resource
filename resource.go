@@ -834,7 +834,7 @@ func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath str
 	if r.generateDocs {
 		createDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "create" + r.name,
-			Method:      "PUT",
+			Method:      http.MethodPost,
 			Path:        routePath,
 			Tags:        r.tags,
 		}).Summary("Creates a new " + r.name).
@@ -888,7 +888,7 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 	if r.generateDocs {
 		deleteDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "delete" + r.name,
-			Method:      "DELETE",
+			Method:      http.MethodDelete,
 			Path:        routePath,
 			Tags:        r.tags,
 		}).
@@ -970,7 +970,7 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 	if r.generateDocs {
 		listDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "list" + r.name,
-			Method:      "GET",
+			Method:      http.MethodGet,
 			Path:        routePath,
 			Tags:        r.tags,
 		}).Summary("Gets a list of " + r.pluralName).
@@ -1096,7 +1096,7 @@ func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath strin
 	if r.generateDocs {
 		getDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "get" + r.name,
-			Method:      "GET",
+			Method:      http.MethodGet,
 			Path:        routePath,
 			Tags:        r.tags,
 		}).
@@ -1161,7 +1161,7 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 	if r.generateDocs {
 		updateDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "update" + r.name,
-			Method:      "PUT",
+			Method:      http.MethodPut,
 			Path:        routePath,
 			Tags:        r.tags,
 		}).Summary("Updates a single " + r.name).
@@ -1219,7 +1219,7 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 	if r.generateDocs {
 		patchDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "patch" + r.name,
-			Method:      "PATCH",
+			Method:      http.MethodPatch,
 			Path:        routePath,
 			Tags:        r.tags,
 		}).Summary("Patches a single " + r.name).
