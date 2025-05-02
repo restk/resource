@@ -16,8 +16,6 @@ access control, and frontend integration.
 - **Flexible access control**:
     - Role-Based Access Control (RBAC)
     - Access Control Lists (ACL)
-    - Relationship-Based Access Control (ReBAC)
-    - Attribute-Based Access Control (ABAC)
 - **Field-level control** for showing/hiding fields based on user roles
 - **Request validation** with customizable validation rules
 - **Custom query operations** for filtering, sorting, and pagination
