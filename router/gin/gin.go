@@ -2,6 +2,7 @@ package gin
 
 import (
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -131,35 +132,43 @@ func toGinHandler(handlers ...router.Handler) []gin.HandlerFunc {
 }
 
 func (r *Router) GET(path string, handlers ...router.Handler) router.Router {
-	r.gin.GET(path, toGinHandler(handlers...)...)
+	r.gin.GET(convertPathFormat(path), toGinHandler(handlers...)...)
 
 	return r
 }
 
 func (r *Router) DELETE(path string, handlers ...router.Handler) router.Router {
-	r.gin.DELETE(path, toGinHandler(handlers...)...)
+	r.gin.DELETE(convertPathFormat(path), toGinHandler(handlers...)...)
 
 	return r
 }
 
 func (r *Router) PUT(path string, handlers ...router.Handler) router.Router {
-	r.gin.PUT(path, toGinHandler(handlers...)...)
+	r.gin.PUT(convertPathFormat(path), toGinHandler(handlers...)...)
 
 	return r
 }
 
 func (r *Router) PATCH(path string, handlers ...router.Handler) router.Router {
-	r.gin.PATCH(path, toGinHandler(handlers...)...)
+	r.gin.PATCH(convertPathFormat(path), toGinHandler(handlers...)...)
 
 	return r
 }
 
 func (r *Router) POST(path string, handlers ...router.Handler) router.Router {
-	r.gin.POST(path, toGinHandler(handlers...)...)
+	r.gin.POST(convertPathFormat(path), toGinHandler(handlers...)...)
 
 	return r
 }
 
 func (r *Router) BasePath() string {
 	return r.gin.BasePath()
+}
+
+// convertPathFormat converts path parameters from {param} format to Gin's :param format.
+func convertPathFormat(path string) string {
+	re := regexp.MustCompile(`\{([^{}]+)}`)
+
+	// Replace each match with :paramName.
+	return re.ReplaceAllString(path, `:$1`)
 }

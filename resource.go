@@ -653,7 +653,7 @@ func (r *Resource[T]) tx(ctx router.Context) *gorm.DB {
 
 // omitIgnoredFields calls Omit on gorm to ignore fields.
 func (r *Resource[T]) omitIgnoredFields(ctx context.Context, permission access.Permission, table *gorm.DB) {
-	omitFields := []string{}
+	var omitFields []string
 	if ignoredFields, ok := r.ignoredFieldsByPermission[permission]; ok {
 		for fieldName, field := range ignoredFields {
 			hasException := false

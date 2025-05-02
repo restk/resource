@@ -84,7 +84,7 @@ func main() {
 	oapi := openapi.New("Your Project", "1.0.0")
 
 	// Create a resource definition for the User model.
-	users := resource.NewResource[User]("users", "id")
+	users := resource.NewResource[User]("user", "id")
 
 	// Specify RBAC to control access to the resource.
 	rbac := &RBAC{}
@@ -115,7 +115,7 @@ This example sets up a REST API for a User model with the following endpoints:
 A resource represents a database model with RESTful operations. Create a resource using `resource.New[T]()`:
 
 ```go
-users := resource.NewResource[User]("users", "id")
+users := resource.NewResource[User]("user", "id")
 ```
 
 This will use the `users` table, with `id` as the primary key (utilizing the struct's JSON tags).
@@ -181,7 +181,7 @@ type User struct {
 
 func main() {
   // Create a resource definition for the User model.
-  users := resource.NewResource[User]("users", "id")
+  users := resource.NewResource[User]("user", "id")
 
   users.BeforeSave(access.PermissionCreate, func(ctx resourcerouter.Context, user *User) error {
     // Hash password before creating user.
@@ -225,9 +225,9 @@ type UserAPIKey struct {
 
 func main() {
   // Create a resource definition for the User model.
-  users := resource.NewResource[User]("users", "id")
+  users := resource.NewResource[User]("user", "id")
 
-  userAPIKeys := resource.NewResource[model.UserAPIKey]("keys", "id")
+  userAPIKeys := resource.NewResource[model.UserAPIKey]("key", "id")
   userAPIKeys.BelongsTo(users, "UserID")
 }
 

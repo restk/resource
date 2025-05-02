@@ -128,7 +128,7 @@ func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath str
 }
 
 func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
-	deletePath := path.Join(groupPath+"/", r.path, "/:"+r.PrimaryFieldURLParam())
+	deletePath := path.Join(groupPath+"/", r.path, "/{"+r.PrimaryFieldURLParam()+"}")
 
 	if r.generateDocs {
 		deleteDoc := openAPI.Register(&openapi.Operation{
@@ -136,9 +136,10 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 			Method:      "DELETE",
 			Path:        path.Join(routes.BasePath(), deletePath),
 			Tags:        r.tags,
-		}).Summary("Deletes a single " + r.name).
+		}).
+			Summary("Deletes a single " + r.name).
 			Description("Deletes a single " + r.name + ".")
-		deleteDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
+		deleteDoc.Request().PathParam(r.PrimaryFieldURLParam(), r.name).Description("Primary ID of the " + r.name).Required(true)
 	}
 
 	routes.DELETE(deletePath, func(ctx router.Context) {
@@ -335,7 +336,7 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 }
 
 func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
-	getPath := path.Join(groupPath, "/", r.path, "/:"+r.PrimaryFieldURLParam())
+	getPath := path.Join(groupPath, "/", r.path, "/{"+r.PrimaryFieldURLParam()+"}")
 
 	if r.generateDocs {
 		getDoc := openAPI.Register(&openapi.Operation{
@@ -343,10 +344,11 @@ func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath strin
 			Method:      "GET",
 			Path:        path.Join(routes.BasePath(), getPath),
 			Tags:        r.tags,
-		}).Summary("Returns a single " + r.name).
-			Description("Returns a single " + r.name + " by the primary id.")
+		}).
+			Summary("Returns a single " + r.name).
+			Description("Returns a single " + r.name + " by the primary ID.")
 
-		getDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Example("1").Required(true)
+		getDoc.Request().PathParam(r.PrimaryFieldURLParam(), r.name).Description("Primary ID of the " + r.name).Example("1").Required(true)
 		getDoc.Response(http.StatusOK).Body(resourceTypeForDoc)
 	}
 
@@ -399,7 +401,7 @@ func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath strin
 }
 
 func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
-	updatePath := path.Join(groupPath, "/", r.path, "/:"+r.PrimaryFieldURLParam())
+	updatePath := path.Join(groupPath, "/", r.path, "/{"+r.PrimaryFieldURLParam()+"}")
 
 	if r.generateDocs {
 		updateDoc := openAPI.Register(&openapi.Operation{
@@ -410,7 +412,7 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 		}).Summary("Updates a single " + r.name).
 			Description("Updates a single " + r.name + ".")
 
-		updateDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
+		updateDoc.Request().PathParam(r.PrimaryFieldURLParam(), r.name).Description("Primary ID of the " + r.name).Required(true)
 		updateDoc.Request().Body(resourceTypeForDoc)
 	}
 
@@ -457,7 +459,7 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 }
 
 func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
-	patchPath := path.Join(groupPath, "/", r.path, "/:"+r.PrimaryFieldURLParam())
+	patchPath := path.Join(groupPath, "/", r.path, "/{"+r.PrimaryFieldURLParam()+"}")
 
 	if r.generateDocs {
 		patchDoc := openAPI.Register(&openapi.Operation{
@@ -468,7 +470,7 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 		}).Summary("Patches a single " + r.name).
 			Description("Patches a single " + r.name + ".")
 
-		patchDoc.Request().PathParam(r.primaryField, r.name).Description("primary id of the " + r.name).Required(true)
+		patchDoc.Request().PathParam(r.PrimaryFieldURLParam(), r.name).Description("Primary ID of the " + r.name).Required(true)
 		patchDoc.Request().Body(resourceTypeForDoc)
 	}
 
