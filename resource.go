@@ -26,16 +26,14 @@ var (
 	caser           = cases.Title(language.English)
 	pluralizeClient = pluralize.NewClient()
 	SchemaRegistry  = openapi.NewMapRegistry("#/components/schemas/", openapi.DefaultSchemaNamer)
-)
 
-type FieldQueryOperation string
-
-var (
 	FieldQueryOperationEquals            FieldQueryOperation = "="
 	FieldQueryOperationLike              FieldQueryOperation = "LIKE"
 	FieldQueryOperationGreaterThanEquals FieldQueryOperation = ">="
 	FieldQueryOperationLessThanEquals    FieldQueryOperation = "<="
 )
+
+type FieldQueryOperation string
 
 // UserError is a custom error type that means this error will be shown to the user. The user gets a JSON containing
 // the code and the message instead of an InternalServerError.
@@ -62,24 +60,28 @@ func NewUserError(code int, message string) error {
 type S map[string]any
 
 var (
-	ResourceNotFound = func(c router.Context) {
-		c.WriteJSON(http.StatusNotFound, S{"code": 404, "message": "Resource not found"})
+	BadRequest = func(ctx router.Context) {
+		ctx.WriteJSON(http.StatusBadRequest, S{"code": 400, "message": "Invalid request"})
 	}
-	InternalServerError = func(c router.Context, err error) {
+	CustomUserError = func(ctx router.Context, userError *UserError) {
+		ctx.WriteJSON(http.StatusInternalServerError, S{"code": userError.Code, "message": userError.Message})
+	}
+	ForbiddenAccess = func(ctx router.Context) {
+		ctx.WriteJSON(http.StatusForbidden, S{"code": 403, "message": "Forbidden access to resource"})
+	}
+	InternalServerError = func(ctx router.Context, err error) {
+		// TODO: accept a logger or find another way to return this outside of Resource.
 		fmt.Println("internal server error", err)
-		c.WriteJSON(http.StatusInternalServerError, S{"code": 500, "message": "Internal Server Error"})
+		ctx.WriteJSON(http.StatusInternalServerError, S{"code": 500, "message": "Internal Server Error"})
 	}
-	CustomUserError = func(c router.Context, userError *UserError) {
-		c.WriteJSON(http.StatusInternalServerError, S{"code": userError.Code, "message": userError.Message})
+	InvalidInput = func(ctx router.Context, msg string) {
+		ctx.WriteJSON(http.StatusBadRequest, S{"code": 400, "message": msg})
 	}
-	BadRequest = func(c router.Context) {
-		c.WriteJSON(http.StatusBadRequest, S{"code": 400, "message": "Invalid request"})
+	NoResults = func(ctx router.Context) {
+		ctx.Writer().WriteHeader(http.StatusNoContent)
 	}
-	InvalidInput = func(c router.Context, msg string) {
-		c.WriteJSON(http.StatusBadRequest, S{"code": 400, "message": msg})
-	}
-	ForbiddenAccess = func(c router.Context) {
-		c.WriteJSON(http.StatusForbidden, S{"code": 407, "message": "Forbidden access to resource"})
+	ResourceNotFound = func(ctx router.Context) {
+		ctx.WriteJSON(http.StatusNotFound, S{"code": 404, "message": "Resource not found"})
 	}
 )
 
@@ -784,7 +786,7 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 	groupPath := ""
 	permissionName := r.name
 	if r.belongsTo != nil {
-		groupPath = path.Join("/", r.belongsTo.Name(), "/:"+r.belongsTo.PrimaryFieldURLParam())
+		groupPath = path.Join(r.belongsTo.PluralName(), "{"+r.belongsTo.PrimaryFieldURLParam()+"}")
 		permissionName = r.belongsTo.Name() + "-" + r.name
 	}
 
@@ -827,13 +829,13 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 }
 
 func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
-	createPath := path.Join(groupPath, "/", r.path)
+	routePath := path.Join(routes.BasePath(), groupPath, r.path)
 
 	if r.generateDocs {
 		createDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "create" + r.name,
-			Method:      "PUT",
-			Path:        path.Join(routes.BasePath(), createPath),
+			Method:      http.MethodPost,
+			Path:        routePath,
 			Tags:        r.tags,
 		}).Summary("Creates a new " + r.name).
 			Description("Creates a new " + r.name + ". If the resource already exists, this returns an error.")
@@ -841,7 +843,7 @@ func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath str
 		createDoc.Request().Body(resourceTypeForDoc)
 	}
 
-	routes.POST(createPath, func(ctx router.Context) {
+	routes.POST(routePath, func(ctx router.Context) {
 		if r.rbac != nil && !r.rbac.HasPermission(ctx, permissionName, access.PermissionCreate) {
 			ForbiddenAccess(ctx)
 			return
@@ -881,13 +883,13 @@ func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath str
 }
 
 func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
-	deletePath := path.Join(groupPath+"/", r.path, "/{"+r.PrimaryFieldURLParam()+"}")
+	routePath := path.Join(routes.BasePath(), groupPath, r.path, "{"+r.PrimaryFieldURLParam()+"}")
 
 	if r.generateDocs {
 		deleteDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "delete" + r.name,
-			Method:      "DELETE",
-			Path:        path.Join(routes.BasePath(), deletePath),
+			Method:      http.MethodDelete,
+			Path:        routePath,
 			Tags:        r.tags,
 		}).
 			Summary("Deletes a single " + r.name).
@@ -895,7 +897,7 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 		deleteDoc.Request().PathParam(r.PrimaryFieldURLParam(), r.name).Description("Primary ID of the " + r.name).Required(true)
 	}
 
-	routes.DELETE(deletePath, func(ctx router.Context) {
+	routes.DELETE(routePath, func(ctx router.Context) {
 		if r.rbac != nil && !r.rbac.HasPermission(ctx, permissionName, access.PermissionDelete) {
 			ForbiddenAccess(ctx)
 			return
@@ -963,13 +965,13 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 }
 
 func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
-	listPath := path.Join(groupPath, "/", r.path)
+	routePath := path.Join(routes.BasePath(), groupPath, r.path)
 
 	if r.generateDocs {
 		listDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "list" + r.name,
-			Method:      "GET",
-			Path:        path.Join(routes.BasePath(), listPath),
+			Method:      http.MethodGet,
+			Path:        routePath,
 			Tags:        r.tags,
 		}).Summary("Gets a list of " + r.pluralName).
 			Description("Get a list of " + r.pluralName + " filtering via query params. This endpoint also supports pagination")
@@ -992,7 +994,7 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 		}
 	}
 
-	routes.GET(listPath, func(ctx router.Context) {
+	routes.GET(routePath, func(ctx router.Context) {
 		if r.rbac != nil && !r.rbac.HasPermission(ctx, permissionName, access.PermissionList) {
 			ForbiddenAccess(ctx)
 			return
@@ -1080,7 +1082,7 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 		}
 
 		if len(resources) == 0 {
-			ResourceNotFound(ctx)
+			NoResults(ctx)
 			return
 		}
 
@@ -1089,13 +1091,13 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 }
 
 func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
-	getPath := path.Join(groupPath, "/", r.path, "/{"+r.PrimaryFieldURLParam()+"}")
+	routePath := path.Join(routes.BasePath(), groupPath, r.path, "{"+r.PrimaryFieldURLParam()+"}")
 
 	if r.generateDocs {
 		getDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "get" + r.name,
-			Method:      "GET",
-			Path:        path.Join(routes.BasePath(), getPath),
+			Method:      http.MethodGet,
+			Path:        routePath,
 			Tags:        r.tags,
 		}).
 			Summary("Returns a single " + r.name).
@@ -1105,7 +1107,7 @@ func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath strin
 		getDoc.Response(http.StatusOK).Body(resourceTypeForDoc)
 	}
 
-	routes.GET(getPath, func(ctx router.Context) {
+	routes.GET(routePath, func(ctx router.Context) {
 		if r.rbac != nil && !r.rbac.HasPermission(ctx, permissionName, access.PermissionRead) {
 			ForbiddenAccess(ctx)
 			return
@@ -1154,13 +1156,13 @@ func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath strin
 }
 
 func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
-	updatePath := path.Join(groupPath, "/", r.path, "/{"+r.PrimaryFieldURLParam()+"}")
+	routePath := path.Join(routes.BasePath(), groupPath, r.path, "{"+r.PrimaryFieldURLParam()+"}")
 
 	if r.generateDocs {
 		updateDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "update" + r.name,
-			Method:      "PUT",
-			Path:        path.Join(routes.BasePath(), updatePath),
+			Method:      http.MethodPut,
+			Path:        routePath,
 			Tags:        r.tags,
 		}).Summary("Updates a single " + r.name).
 			Description("Updates a single " + r.name + ".")
@@ -1169,7 +1171,7 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 		updateDoc.Request().Body(resourceTypeForDoc)
 	}
 
-	routes.PUT(updatePath, func(ctx router.Context) {
+	routes.PUT(routePath, func(ctx router.Context) {
 		if r.rbac != nil && !r.rbac.HasPermission(ctx, permissionName, access.PermissionUpdate) {
 			ForbiddenAccess(ctx)
 			return
@@ -1212,13 +1214,13 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 }
 
 func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
-	patchPath := path.Join(groupPath, "/", r.path, "/{"+r.PrimaryFieldURLParam()+"}")
+	routePath := path.Join(routes.BasePath(), groupPath, r.path, "{"+r.PrimaryFieldURLParam()+"}")
 
 	if r.generateDocs {
 		patchDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "patch" + r.name,
-			Method:      "PATCH",
-			Path:        path.Join(routes.BasePath(), patchPath),
+			Method:      http.MethodPatch,
+			Path:        routePath,
 			Tags:        r.tags,
 		}).Summary("Patches a single " + r.name).
 			Description("Patches a single " + r.name + ".")
@@ -1227,7 +1229,7 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 		patchDoc.Request().Body(resourceTypeForDoc)
 	}
 
-	routes.PATCH(patchPath, func(ctx router.Context) {
+	routes.PATCH(routePath, func(ctx router.Context) {
 		if r.rbac != nil && !r.rbac.HasPermission(ctx, permissionName, access.PermissionUpdate) {
 			ForbiddenAccess(ctx)
 			return
