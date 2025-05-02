@@ -263,10 +263,6 @@ function UserList() {
 }
 ```
 
-## Examples
-
-See the `examples` directory for more complete examples.
-
 ## License
 
 MIT
