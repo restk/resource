@@ -66,7 +66,7 @@ function useList(...args) {
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(false);
 
-    // pagination
+    // Pagination.
     const [page, setPage] = useState(options.page || 1);
     const [pageSize, setPageSize] = useState(options.pageSize || 25);
 
@@ -80,7 +80,7 @@ function useList(...args) {
             }
 
             filters['page'] = page;
-            filters['page_size'] = pageSize;
+            filters['pageSize'] = pageSize;
 
             setIsLoading(true);
             setSuccess(false);
@@ -118,7 +118,7 @@ function useList(...args) {
         error: error,
         success: success,
 
-        // pagination
+        // Pagination.
         page: page,
         setPage: setPage,
         pageSize: pageSize,

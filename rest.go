@@ -279,7 +279,7 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 		// injecting SQL in query params.
 		for _, param := range queryParams.Keys() {
 			// Skip pagination parameters
-			if param == "page" || param == "page_size" || param == "limit" || param == "offset" {
+			if param == "page" || param == "pageSize" || param == "limit" || param == "offset" {
 				continue
 			}
 
@@ -616,13 +616,13 @@ func (r *Resource[T]) getPaginationParams(queryParams router.QueryParams) (int, 
 	offset := 0
 
 	// Check for page-based pagination.
-	if queryParams.Has("page") && queryParams.Has("page_size") {
+	if queryParams.Has("page") && queryParams.Has("pageSize") {
 		page, _ := strconv.Atoi(queryParams.Get("page"))
 		if page <= 0 {
 			page = 1
 		}
 
-		pageSize, _ := strconv.Atoi(queryParams.Get("page_size"))
+		pageSize, _ := strconv.Atoi(queryParams.Get("pageSize"))
 		if pageSize <= 0 {
 			pageSize = r.pageSize
 		}

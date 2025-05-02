@@ -292,9 +292,9 @@ func TestListUsers(t *testing.T) {
 			permissions: userPermissions,
 		},
 		{
-			name:       "GET /users - pagination page=2, page_size=1 => second item",
+			name:       "GET /users - pagination page=2, pageSize=1 => second item",
 			method:     http.MethodGet,
-			path:       "/users?page=2&page_size=1",
+			path:       "/users?page=2&pageSize=1",
 			wantStatus: http.StatusOK,
 			wantStruct: []user{
 				{ID: 2, Name: "Bar", Organization: "OrgB", Role: "User", IgnoredField: "A", IgnoredField2: "B", IgnoredFieldUnlessRole: "", Age: 18, CreatedAt: time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)},
