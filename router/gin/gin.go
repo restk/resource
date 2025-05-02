@@ -2,6 +2,7 @@ package gin
 
 import (
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,7 +14,7 @@ func GinContext(r router.Context) *gin.Context {
 
 	rc, ok := impl.(*gin.Context)
 	if !ok {
-		panic("c is not a gin context")
+		panic("ctx is not a gin context")
 	}
 
 	return rc
@@ -58,6 +59,10 @@ func (c *Context) Request() *http.Request {
 	return c.ginContext.Request
 }
 
+func (c *Context) Writer() http.ResponseWriter {
+	return c.ginContext.Writer
+}
+
 func (c *Context) QueryParams() router.QueryParams {
 	return &QueryParams{
 		ginContext: c.ginContext,
@@ -69,7 +74,7 @@ func (c *Context) Param(key string) string {
 }
 
 func (c *Context) WriteJSON(code int, v interface{}) {
-	c.ginContext.IndentedJSON(code, v)
+	c.ginContext.JSON(code, v)
 }
 
 func (c *Context) ReadJSON(v interface{}) error {
@@ -127,35 +132,43 @@ func toGinHandler(handlers ...router.Handler) []gin.HandlerFunc {
 }
 
 func (r *Router) GET(path string, handlers ...router.Handler) router.Router {
-	r.gin.GET(path, toGinHandler(handlers...)...)
+	r.gin.GET(convertPathFormat(path), toGinHandler(handlers...)...)
 
 	return r
 }
 
 func (r *Router) DELETE(path string, handlers ...router.Handler) router.Router {
-	r.gin.DELETE(path, toGinHandler(handlers...)...)
+	r.gin.DELETE(convertPathFormat(path), toGinHandler(handlers...)...)
 
 	return r
 }
 
 func (r *Router) PUT(path string, handlers ...router.Handler) router.Router {
-	r.gin.PUT(path, toGinHandler(handlers...)...)
+	r.gin.PUT(convertPathFormat(path), toGinHandler(handlers...)...)
 
 	return r
 }
 
 func (r *Router) PATCH(path string, handlers ...router.Handler) router.Router {
-	r.gin.PATCH(path, toGinHandler(handlers...)...)
+	r.gin.PATCH(convertPathFormat(path), toGinHandler(handlers...)...)
 
 	return r
 }
 
 func (r *Router) POST(path string, handlers ...router.Handler) router.Router {
-	r.gin.POST(path, toGinHandler(handlers...)...)
+	r.gin.POST(convertPathFormat(path), toGinHandler(handlers...)...)
 
 	return r
 }
 
 func (r *Router) BasePath() string {
 	return r.gin.BasePath()
+}
+
+// convertPathFormat converts path parameters from {param} format to Gin's :param format.
+func convertPathFormat(path string) string {
+	re := regexp.MustCompile(`\{([^{}]+)}`)
+
+	// Replace each match with :paramName.
+	return re.ReplaceAllString(path, `:$1`)
 }
