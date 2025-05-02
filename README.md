@@ -248,14 +248,31 @@ The package includes a React hook for easy frontend integration:
 import {useResource} from '@restk/resource';
 
 function UserList() {
-    const {data, loading, error} = useResource('/users');
+    let {
+        list,
+        get,
+        create,
+        update,
+        patch,
+        remove,
+    } = useResource("users", { pageSize: 10 });
 
-    if (loading) return <div>Loading...</div>;
-    if (error) return <div>Error: {error.message}</div>;
+    let users = list.users || [];
+
+    useEffect(() => {
+      list.fetch({})
+    }, [list.page]);
+
+    if (list.loading) {
+        return (<div>Loading...</div>)
+    }
+    if (list.error) {
+        return (<div>Error: {list.error.message}</div>)
+    }
 
     return (
         <ul>
-            {data.map(user => (
+            {users.map(user => (
                 <li key={user.id}>{user.name}</li>
             ))}
         </ul>
