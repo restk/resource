@@ -71,6 +71,8 @@ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/restk/openapi v0.0.0-20250415142757-1bc3655e78f7 h1:CdI/lRXgs1Xg6jtMR6gDaTziVANyphSmMQzdPEfi5RE=
 github.com/restk/openapi v0.0.0-20250415142757-1bc3655e78f7/go.mod h1:aIXFVEkWYa/A1XK6tgNq5s/If8nx4TKIPVc+VbD2Q+0=
+github.com/restk/openapi v0.0.0-20250502173209-5869cfb0c010 h1:/0zAcwI0sV6mPjpl4oTz9lyFJv52ys5I4fCDViC8jBs=
+github.com/restk/openapi v0.0.0-20250502173209-5869cfb0c010/go.mod h1:aIXFVEkWYa/A1XK6tgNq5s/If8nx4TKIPVc+VbD2Q+0=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
 github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
