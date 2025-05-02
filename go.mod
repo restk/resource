@@ -9,7 +9,7 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/pkg/errors v0.9.1
-	github.com/restk/openapi v0.0.0-20250415142757-1bc3655e78f7
+	github.com/restk/openapi v0.0.0-20250502173209-5869cfb0c010
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/text v0.24.0
 	gorm.io/gorm v1.26.0
