@@ -5,7 +5,7 @@
 
 `resource` is a Go package that simplifies the creation of REST APIs for your database models. It automatically
 generates RESTful endpoints with CRUD operations for your GORM models, with support for multiple router frameworks,
-access control, and frontend integration.
+access control, and frontend integration. It also automatically generates your docs via OpenAPI
 
 ## Features
 
