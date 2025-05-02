@@ -29,9 +29,21 @@ var (
 
 	FieldQueryOperationEquals            FieldQueryOperation = "="
 	FieldQueryOperationLike              FieldQueryOperation = "LIKE"
+	FieldQueryOperationGreaterThan       FieldQueryOperation = ">"
 	FieldQueryOperationGreaterThanEquals FieldQueryOperation = ">="
+	FieldQueryOperationLessThan          FieldQueryOperation = "<"
 	FieldQueryOperationLessThanEquals    FieldQueryOperation = "<="
+	FieldQueryOperationNotEqual          FieldQueryOperation = "!="
 )
+
+var querySuffixToOperator = map[string]FieldQueryOperation{
+	"Gt":   FieldQueryOperationGreaterThan,
+	"Gte":  FieldQueryOperationGreaterThanEquals,
+	"Lt":   FieldQueryOperationLessThan,
+	"Lte":  FieldQueryOperationLessThanEquals,
+	"Ne":   FieldQueryOperationNotEqual,
+	"Like": FieldQueryOperationLike,
+}
 
 type FieldQueryOperation string
 
@@ -525,12 +537,12 @@ func (r *Resource[T]) IgnoreFieldUnlessRole(field string, accessMethod []access.
 }
 
 // retrieveQueryFieldOperator retrieves the query operator for a field.
-func (r *Resource[T]) retrieveQueryFieldOperator(field string) string {
+func (r *Resource[T]) retrieveQueryFieldOperator(field string) FieldQueryOperation {
 	if op, ok := r.queryOperatorByField[field]; ok {
-		return string(op)
+		return op
 	}
 
-	return string(FieldQueryOperationEquals)
+	return FieldQueryOperationEquals
 }
 
 // generateFieldByJSON returns a field name by its JSON tag.
@@ -1039,12 +1051,21 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 				continue
 			}
 
+			paramToLookup := param
+			paramSuffix := ""
+			for suffix := range querySuffixToOperator {
+				if strings.HasSuffix(param, suffix) {
+					paramToLookup = strings.TrimSuffix(param, suffix)
+					paramSuffix = suffix
+				}
+			}
+
 			// We support lookups by the Field name or the JSON tag, first we attempt JSON.
-			field, ok := r.fieldByJSON[param]
+			field, ok := r.fieldByJSON[paramToLookup]
 			if !ok {
 				// We then attempt the original param which we assume is a Field instead of a JSON tag (validated
 				// below.)
-				field = param
+				field = paramToLookup
 			}
 
 			if !r.isFieldNameValid(field) {
@@ -1058,7 +1079,13 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 				continue
 			}
 
-			queryOperator := r.retrieveQueryFieldOperator(field)
+			var queryOperator FieldQueryOperation
+			if paramSuffix == "" {
+				queryOperator = r.retrieveQueryFieldOperator(field)
+			} else {
+				queryOperator = querySuffixToOperator[paramSuffix]
+			}
+
 			table = table.Where(fmt.Sprintf("%v %v ?", column, queryOperator), parsedValue)
 		}
 
@@ -1295,7 +1322,7 @@ func (r *Resource[T]) parseAndValidateRequestBody(ctx router.Context) (*T, error
 			errStrings = append(errStrings, err.Error())
 		}
 
-		InvalidInput(ctx, strings.Join(errStrings, ","))
+		InvalidInput(ctx, strings.Join(errStrings, ", \n"))
 		return nil, errors.New("invalid input")
 	}
 
