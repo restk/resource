@@ -21,7 +21,7 @@ access control, and frontend integration. It also automatically generates your d
 - **Custom query operations** for filtering, sorting, and pagination
 - **Lifecycle hooks** for customizing behavior at different stages
 - **Frontend integration** with JavaScript/React hooks
-- **OpenAPI integration** for automatic documentation
+- **OpenAPI integration** API documentation is auto generated for you
 
 ## Installation
 
