@@ -106,6 +106,7 @@ This example sets up a REST API for a User model with the following endpoints:
 - `GET /users/:id` - Get a specific user
 - `POST /users` - Create a new user
 - `PUT /users/:id` - Update a user
+- `PATCH /users/:id` - Patch a user
 - `DELETE /users/:id` - Delete a user
 
 ## Core Concepts
