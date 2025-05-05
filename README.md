@@ -239,6 +239,25 @@ When generating the REST endpoints for `userAPIKeys`, they'll be routed under `/
 
 Clients can request pages using `?page=2` or `?limit=20&offset=40`.
 
+### Query params
+
+The list endpoint such as `GET /users` has query params for filtering, you can use the JSON tag name or the field name such as `GET /users?name=tom&age=21`. 
+
+
+### Operation suffix
+
+For any query param, you can add an operation suffix to change the operator, for example, you could do `GET /users?nameLike=%tom%&ageGte?21` you can also do ranges such as `/users?createdAtGte=?&createdAtLte=?`
+
+| Suffix    | SQL Operator | Description                       |
+|--------|--------------|-----------------------------------|
+| `Gt`   | `>`          | Greater than                      |
+| `Gte`  | `>=`         | Greater than or equal to          |
+| `Lt`   | `<`          | Less than                         |
+| `Lte`  | `<=`         | Less than or equal to             |
+| `Ne`   | `!=`         | Not equal to                      |
+| `Like` | `LIKE`       | Pattern match                     |
+
+
 ## Frontend Integration
 
 The package includes a React hook for easy frontend integration:
