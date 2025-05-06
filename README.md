@@ -277,7 +277,7 @@ function UserList() {
         remove,
     } = useResource("users", { pageSize: 10 });
 
-    let users = list.users || [];
+    let users = list.data || [];
 
     useEffect(() => {
       list.fetch({})
