@@ -1157,7 +1157,6 @@ func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath strin
 				query.Preload(preload)
 			}
 		}
-		r.omitIgnoredFields(ctx, access.PermissionList, query)
 
 		if err = query.First(&resource).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
