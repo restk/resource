@@ -173,11 +173,11 @@ type Resource[T any] struct {
 	ignoredFieldsByPermission map[access.Permission]map[string]*FieldIgnoreRule
 
 	// Hooks.
-	beforeSave     map[access.Permission][]func(c router.Context, obj *T) error
-	afterSave      map[access.Permission][]func(c router.Context, obj *T) error
-	beforeDelete   []func(c router.Context, obj *T) error
-	afterDelete    []func(c router.Context, obj *T) error
-	beforeResponse map[access.Permission]func(c router.Context, obj *T) (any, error)
+	beforeSave     map[access.Permission][]func(c context.Context, obj *T) error
+	afterSave      map[access.Permission][]func(c context.Context, obj *T) error
+	beforeDelete   []func(c context.Context, obj *T) error
+	afterDelete    []func(c context.Context, obj *T) error
+	beforeResponse map[access.Permission]func(c context.Context, obj *T) (any, error)
 
 	// Pagination.
 	maxPageSize int
@@ -230,11 +230,11 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		tags:                      []string{caser.String(pluralizedName)},
 		generateDocs:              true,
 		hasOwnership:              DefaultHasOwnership[T],
-		beforeSave:                make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
-		afterSave:                 make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
-		beforeDelete:              make([]func(c router.Context, obj *T) error, 0),
-		afterDelete:               make([]func(c router.Context, obj *T) error, 0),
-		beforeResponse:            make(map[access.Permission]func(c router.Context, obj *T) (any, error), 0),
+		beforeSave:                make(map[access.Permission][]func(c context.Context, obj *T) error, 0),
+		afterSave:                 make(map[access.Permission][]func(c context.Context, obj *T) error, 0),
+		beforeDelete:              make([]func(c context.Context, obj *T) error, 0),
+		afterDelete:               make([]func(c context.Context, obj *T) error, 0),
+		beforeResponse:            make(map[access.Permission]func(c context.Context, obj *T) (any, error), 0),
 		queryOperatorByField:      make(map[string]FieldQueryOperation, 0),
 		columnByField:             make(map[string]string, 0),
 		preload:                   make([]string, 0),
@@ -406,17 +406,17 @@ func (r *Resource[T]) Preload(association ...string) {
 }
 
 // BeforeSave adds a function that will be called before a save of a Resource. You can add multiple functions.
-func (r *Resource[T]) BeforeSave(permission access.Permission, f func(c router.Context, obj *T) error) {
+func (r *Resource[T]) BeforeSave(permission access.Permission, f func(c context.Context, obj *T) error) {
 	if _, ok := r.beforeSave[permission]; !ok {
-		r.beforeSave[permission] = make([]func(c router.Context, obj *T) error, 0)
+		r.beforeSave[permission] = make([]func(c context.Context, obj *T) error, 0)
 	}
 	r.beforeSave[permission] = append(r.beforeSave[permission], f)
 }
 
 // AfterSave is called after the resource is saved to the database successfully. You can add multiple functions.
-func (r *Resource[T]) AfterSave(permission access.Permission, f func(c router.Context, obj *T) error) {
+func (r *Resource[T]) AfterSave(permission access.Permission, f func(c context.Context, obj *T) error) {
 	if _, ok := r.afterSave[permission]; !ok {
-		r.afterSave[permission] = make([]func(c router.Context, obj *T) error, 0)
+		r.afterSave[permission] = make([]func(c context.Context, obj *T) error, 0)
 	}
 
 	r.afterSave[permission] = append(r.afterSave[permission], f)
@@ -424,17 +424,17 @@ func (r *Resource[T]) AfterSave(permission access.Permission, f func(c router.Co
 
 // BeforeResponse is called right before we respond to the client and allows you to return a custom response instead
 // of the default response.
-func (r *Resource[T]) BeforeResponse(permission access.Permission, f func(c router.Context, obj *T) (any, error)) {
+func (r *Resource[T]) BeforeResponse(permission access.Permission, f func(c context.Context, obj *T) (any, error)) {
 	r.beforeResponse[permission] = f
 }
 
 // BeforeDelete is called right before a resource is deleted.
-func (r *Resource[T]) BeforeDelete(f func(c router.Context, obj *T) error) {
+func (r *Resource[T]) BeforeDelete(f func(c context.Context, obj *T) error) {
 	r.beforeDelete = append(r.beforeDelete, f)
 }
 
 // AfterDelete is called after a resource is deleted successfully.
-func (r *Resource[T]) AfterDelete(f func(c router.Context, obj *T) error) {
+func (r *Resource[T]) AfterDelete(f func(c context.Context, obj *T) error) {
 	r.afterDelete = append(r.afterDelete, f)
 }
 
@@ -656,7 +656,7 @@ func (r *Resource[T]) TXContextKey(txKey string) {
 }
 
 // tx returns a transaction from the resource or panics.
-func (r *Resource[T]) tx(ctx router.Context) *gorm.DB {
+func (r *Resource[T]) tx(ctx context.Context) *gorm.DB {
 	// TODO: when implementing the generic model interface, we should have ways for the user to determine where the tx
 	// comes from instead of hard pulling it from the context.
 	val := ctx.Value(r.txContextKey)
@@ -840,6 +840,33 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 	return nil
 }
 
+// Create creates a resource.
+func (r *Resource[T]) Create(ctx context.Context, resource *T) (err error) {
+	if err = r.runBeforeSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
+		return err
+	}
+
+	tx := r.tx(ctx)
+	table := tx.Model(r.table)
+	r.omitIgnoredFields(ctx, access.PermissionCreate, table)
+
+	if result := table.Create(&resource); result.Error != nil {
+		return result.Error
+	}
+
+	if r.acl != nil {
+		if err = r.acl.GrantPermissions(ctx, r.name, r.getID(resource), r.aclGrantPermissions); err != nil {
+			return err
+		}
+	}
+
+	if err = r.runAfterSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path)
 
@@ -862,31 +889,12 @@ func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath str
 		}
 
 		resource, err := r.parseAndValidateRequestBody(ctx)
-		if err != nil {
+	 if err != nil {
 			return
 		}
 
-		if err = r.runBeforeSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
-			return
-		}
-
-		tx := r.tx(ctx)
-		table := tx.Model(r.table)
-		r.omitIgnoredFields(ctx, access.PermissionCreate, table)
-
-		if result := table.Create(&resource); result.Error != nil {
-			InternalServerError(ctx, result.Error)
-			return
-		}
-
-		if r.acl != nil {
-			if err = r.acl.GrantPermissions(ctx, r.name, r.getID(resource), r.aclGrantPermissions); err != nil {
-				InternalServerError(ctx, err)
-				return
-			}
-		}
-
-		if err = r.runAfterSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
+		if err := r.Create(ctx, resource); err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
@@ -1214,6 +1222,7 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 		}
 
 		if err = r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
@@ -1232,6 +1241,7 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 		}
 
 		if err = r.runAfterSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
@@ -1272,6 +1282,7 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 		}
 
 		if err = r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
@@ -1290,6 +1301,7 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 		}
 
 		if err = r.runAfterSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
@@ -1335,17 +1347,10 @@ func (r *Resource[T]) parseAndValidateRequestBody(ctx router.Context) (*T, error
 }
 
 // runBeforeSaveHooks executes all registered before-save hooks.
-func (r *Resource[T]) runBeforeSaveHooks(ctx router.Context, resource *T, permission access.Permission) error {
+func (r *Resource[T]) runBeforeSaveHooks(ctx context.Context, resource *T, permission access.Permission) error {
 	if hooks, ok := r.beforeSave[permission]; ok {
 		for _, hook := range hooks {
 			if err := hook(ctx, resource); err != nil {
-				var userError *UserError
-				if errors.As(err, &userError) {
-					CustomUserError(ctx, userError)
-					return err
-				}
-
-				InternalServerError(ctx, err)
 				return err
 			}
 		}
@@ -1354,17 +1359,10 @@ func (r *Resource[T]) runBeforeSaveHooks(ctx router.Context, resource *T, permis
 }
 
 // runAfterSaveHooks executes all registered after-save hooks.
-func (r *Resource[T]) runAfterSaveHooks(ctx router.Context, resource *T, permission access.Permission) error {
+func (r *Resource[T]) runAfterSaveHooks(ctx context.Context, resource *T, permission access.Permission) error {
 	if hooks, ok := r.afterSave[permission]; ok {
 		for _, hook := range hooks {
 			if err := hook(ctx, resource); err != nil {
-				var userError *UserError
-				if errors.As(err, &userError) {
-					CustomUserError(ctx, userError)
-					return err
-				}
-
-				InternalServerError(ctx, err)
 				return err
 			}
 		}
@@ -1439,6 +1437,16 @@ func (r *Resource[T]) getPaginationParams(queryParams router.QueryParams) (int, 
 	}
 
 	return limit, offset, nil
+}
+
+// sendError sends an error
+func (r *Resource[T]) sendError(ctx router.Context, err error) {
+	var userError *UserError
+	if errors.As(err, &userError) {
+		CustomUserError(ctx, userError)
+		return
+	}
+	InternalServerError(ctx, err)
 }
 
 // sendResponse prepares and sends the API response.
