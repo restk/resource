@@ -173,11 +173,11 @@ type Resource[T any] struct {
 	ignoredFieldsByPermission map[access.Permission]map[string]*FieldIgnoreRule
 
 	// Hooks.
-	beforeSave     map[access.Permission][]func(c context.Context, obj *T) error
-	afterSave      map[access.Permission][]func(c context.Context, obj *T) error
-	beforeDelete   []func(c context.Context, obj *T) error
-	afterDelete    []func(c context.Context, obj *T) error
-	beforeResponse map[access.Permission]func(c context.Context, obj *T) (any, error)
+	beforeSave     map[access.Permission][]func(ctx context.Context, obj *T) error
+	afterSave      map[access.Permission][]func(ctx context.Context, obj *T) error
+	beforeDelete   []func(ctx context.Context, obj *T) error
+	afterDelete    []func(ctx context.Context, obj *T) error
+	beforeResponse map[access.Permission]func(ctx context.Context, obj *T) (any, error)
 
 	// Pagination.
 	maxPageSize int
@@ -230,11 +230,11 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		tags:                      []string{caser.String(pluralizedName)},
 		generateDocs:              true,
 		hasOwnership:              DefaultHasOwnership[T],
-		beforeSave:                make(map[access.Permission][]func(c context.Context, obj *T) error, 0),
-		afterSave:                 make(map[access.Permission][]func(c context.Context, obj *T) error, 0),
-		beforeDelete:              make([]func(c context.Context, obj *T) error, 0),
-		afterDelete:               make([]func(c context.Context, obj *T) error, 0),
-		beforeResponse:            make(map[access.Permission]func(c context.Context, obj *T) (any, error), 0),
+		beforeSave:                make(map[access.Permission][]func(ctx context.Context, obj *T) error, 0),
+		afterSave:                 make(map[access.Permission][]func(ctx context.Context, obj *T) error, 0),
+		beforeDelete:              make([]func(ctx context.Context, obj *T) error, 0),
+		afterDelete:               make([]func(ctx context.Context, obj *T) error, 0),
+		beforeResponse:            make(map[access.Permission]func(ctx context.Context, obj *T) (any, error), 0),
 		queryOperatorByField:      make(map[string]FieldQueryOperation, 0),
 		columnByField:             make(map[string]string, 0),
 		preload:                   make([]string, 0),
@@ -406,17 +406,17 @@ func (r *Resource[T]) Preload(association ...string) {
 }
 
 // BeforeSave adds a function that will be called before a save of a Resource. You can add multiple functions.
-func (r *Resource[T]) BeforeSave(permission access.Permission, f func(c context.Context, obj *T) error) {
+func (r *Resource[T]) BeforeSave(permission access.Permission, f func(ctx context.Context, obj *T) error) {
 	if _, ok := r.beforeSave[permission]; !ok {
-		r.beforeSave[permission] = make([]func(c context.Context, obj *T) error, 0)
+		r.beforeSave[permission] = make([]func(ctx context.Context, obj *T) error, 0)
 	}
 	r.beforeSave[permission] = append(r.beforeSave[permission], f)
 }
 
 // AfterSave is called after the resource is saved to the database successfully. You can add multiple functions.
-func (r *Resource[T]) AfterSave(permission access.Permission, f func(c context.Context, obj *T) error) {
+func (r *Resource[T]) AfterSave(permission access.Permission, f func(ctx context.Context, obj *T) error) {
 	if _, ok := r.afterSave[permission]; !ok {
-		r.afterSave[permission] = make([]func(c context.Context, obj *T) error, 0)
+		r.afterSave[permission] = make([]func(ctx context.Context, obj *T) error, 0)
 	}
 
 	r.afterSave[permission] = append(r.afterSave[permission], f)
@@ -424,17 +424,17 @@ func (r *Resource[T]) AfterSave(permission access.Permission, f func(c context.C
 
 // BeforeResponse is called right before we respond to the client and allows you to return a custom response instead
 // of the default response.
-func (r *Resource[T]) BeforeResponse(permission access.Permission, f func(c context.Context, obj *T) (any, error)) {
+func (r *Resource[T]) BeforeResponse(permission access.Permission, f func(ctx context.Context, obj *T) (any, error)) {
 	r.beforeResponse[permission] = f
 }
 
 // BeforeDelete is called right before a resource is deleted.
-func (r *Resource[T]) BeforeDelete(f func(c context.Context, obj *T) error) {
+func (r *Resource[T]) BeforeDelete(f func(ctx context.Context, obj *T) error) {
 	r.beforeDelete = append(r.beforeDelete, f)
 }
 
 // AfterDelete is called after a resource is deleted successfully.
-func (r *Resource[T]) AfterDelete(f func(c context.Context, obj *T) error) {
+func (r *Resource[T]) AfterDelete(f func(ctx context.Context, obj *T) error) {
 	r.afterDelete = append(r.afterDelete, f)
 }
 
