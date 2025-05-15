@@ -34,6 +34,8 @@ var (
 	FieldQueryOperationLessThan          FieldQueryOperation = "<"
 	FieldQueryOperationLessThanEquals    FieldQueryOperation = "<="
 	FieldQueryOperationNotEqual          FieldQueryOperation = "!="
+
+	ErrRecordNotFound = errors.New("record not found")
 )
 
 var querySuffixToOperator = map[string]FieldQueryOperation{
@@ -841,13 +843,13 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 }
 
 // Create creates a resource.
-func (r *Resource[T]) Create(ctx context.Context, resource *T) (err error) {
-	if err = r.runBeforeSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
+func (r *Resource[T]) Create(ctx context.Context, resource *T) error {
+	if err := r.runBeforeSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
 		return err
 	}
 
 	tx := r.tx(ctx)
-	table := tx.Model(r.table)
+	table := tx.Model(resource)
 	r.omitIgnoredFields(ctx, access.PermissionCreate, table)
 
 	if result := table.Create(&resource); result.Error != nil {
@@ -855,12 +857,12 @@ func (r *Resource[T]) Create(ctx context.Context, resource *T) (err error) {
 	}
 
 	if r.acl != nil {
-		if err = r.acl.GrantPermissions(ctx, r.name, r.getID(resource), r.aclGrantPermissions); err != nil {
+		if err := r.acl.GrantPermissions(ctx, r.name, r.getID(resource), r.aclGrantPermissions); err != nil {
 			return err
 		}
 	}
 
-	if err = r.runAfterSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
+	if err := r.runAfterSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
 		return err
 	}
 
@@ -889,7 +891,7 @@ func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath str
 		}
 
 		resource, err := r.parseAndValidateRequestBody(ctx)
-	 if err != nil {
+		if err != nil {
 			return
 		}
 
@@ -900,6 +902,42 @@ func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath str
 
 		r.sendResponse(ctx, resource, access.PermissionCreate)
 	})
+}
+
+// Delete deletes a resource by id
+func (r *Resource[T]) Delete(ctx context.Context, primaryId any) error {
+	whereClause := fmt.Sprintf("%v = ?", r.primaryField)
+	whereArgs := []any{primaryId}
+	tx := r.tx(ctx)
+
+	var resource *T
+	if result := tx.Model(r.table).Where(whereClause, whereArgs...).First(&resource); result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return ErrRecordNotFound
+		}
+		return result.Error
+	}
+
+	for _, beforeDeleteFunc := range r.beforeDelete {
+		if err := beforeDeleteFunc(ctx, resource); err != nil {
+			return err
+		}
+	}
+
+	var deletedResource *T
+	if err := tx.Model(r.table).Where(whereClause, whereArgs...).Delete(&deletedResource).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrRecordNotFound
+		}
+	}
+
+	for _, afterDeleteFunc := range r.afterDelete {
+		if err := afterDeleteFunc(ctx, resource); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
@@ -1189,6 +1227,26 @@ func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath strin
 	})
 }
 
+func (r *Resource[T]) Update(ctx context.Context, resource *T) error {
+	if err := r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		return err
+	}
+
+	tx := r.tx(ctx)
+	table := tx.Model(resource)
+	r.omitIgnoredFields(ctx, access.PermissionUpdate, table)
+
+	if result := table.Save(resource); result.Error != nil {
+		return result.Error
+	}
+
+	if err := r.runAfterSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path, "{"+r.PrimaryFieldURLParam()+"}")
 
@@ -1221,32 +1279,36 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 			return
 		}
 
-		if err = r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
-			r.sendError(ctx, err)
-			return
-		}
-
-		tx := r.tx(ctx)
-		whereClause, whereArgs, err := r.buildResourceWhereClause(ctx, resourceTypeForDoc)
-		if err != nil {
-			return
-		}
-
-		table := tx.Model(r.table)
-		r.omitIgnoredFields(ctx, access.PermissionUpdate, table)
-
-		if result := table.Where(whereClause, whereArgs...).Save(&resource); result.Error != nil {
-			InternalServerError(ctx, result.Error)
-			return
-		}
-
-		if err = r.runAfterSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		if err := r.Update(ctx, resource); err != nil {
 			r.sendError(ctx, err)
 			return
 		}
 
 		r.sendResponse(ctx, resource, access.PermissionUpdate)
 	})
+}
+
+func (r *Resource[T]) Patch(ctx context.Context, primaryId any, resource *T) error {
+	whereClause := fmt.Sprintf("%v = ?", r.primaryField)
+	whereArgs := []any{primaryId}
+
+	if err := r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		return err
+	}
+
+	tx := r.tx(ctx)
+	table := tx.Model(resource)
+	r.omitIgnoredFields(ctx, access.PermissionUpdate, table)
+
+	if result := table.Where(whereClause, whereArgs).Updates(resource); result.Error != nil {
+		return result.Error
+	}
+
+	if err := r.runAfterSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
@@ -1281,26 +1343,14 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 			return
 		}
 
-		if err = r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		param := ctx.Param(r.PrimaryFieldURLParam())
+		_, parsedValue, err := parseFieldFromParam(r.tx(ctx), param, resourceTypeForDoc, r.primaryField)
+		if err != nil {
 			r.sendError(ctx, err)
 			return
 		}
 
-		whereClause, whereArgs, err := r.buildResourceWhereClause(ctx, resourceTypeForDoc)
-		if err != nil {
-			return
-		}
-
-		tx := r.tx(ctx)
-		table := tx.Model(r.table)
-		r.omitIgnoredFields(ctx, access.PermissionUpdate, table)
-
-		if result := table.Where(whereClause, whereArgs...).Updates(&resource); result.Error != nil {
-			InternalServerError(ctx, result.Error)
-			return
-		}
-
-		if err = r.runAfterSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		if err := r.Patch(ctx, parsedValue, resource); err != nil {
 			r.sendError(ctx, err)
 			return
 		}
