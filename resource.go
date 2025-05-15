@@ -1227,7 +1227,10 @@ func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath strin
 	})
 }
 
-func (r *Resource[T]) Update(ctx context.Context, resource *T) error {
+func (r *Resource[T]) Update(ctx context.Context, primaryId any, resource *T) error {
+	whereClause := fmt.Sprintf("%v = ?", r.primaryField)
+	whereArgs := []any{primaryId}
+
 	if err := r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
 		return err
 	}
@@ -1236,7 +1239,7 @@ func (r *Resource[T]) Update(ctx context.Context, resource *T) error {
 	table := tx.Model(resource)
 	r.omitIgnoredFields(ctx, access.PermissionUpdate, table)
 
-	if result := table.Save(resource); result.Error != nil {
+	if result := table.Where(whereClause, whereArgs).Save(resource); result.Error != nil {
 		return result.Error
 	}
 
@@ -1279,7 +1282,14 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 			return
 		}
 
-		if err := r.Update(ctx, resource); err != nil {
+		param := ctx.Param(r.PrimaryFieldURLParam())
+		_, primaryFieldValue, err := parseFieldFromParam(r.tx(ctx), param, resourceTypeForDoc, r.primaryField)
+		if err != nil {
+			r.sendError(ctx, err)
+			return
+		}
+
+		if err := r.Update(ctx, primaryFieldValue, resource); err != nil {
 			r.sendError(ctx, err)
 			return
 		}
@@ -1344,13 +1354,13 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 		}
 
 		param := ctx.Param(r.PrimaryFieldURLParam())
-		_, parsedValue, err := parseFieldFromParam(r.tx(ctx), param, resourceTypeForDoc, r.primaryField)
+		_, primaryFieldValue, err := parseFieldFromParam(r.tx(ctx), param, resourceTypeForDoc, r.primaryField)
 		if err != nil {
 			r.sendError(ctx, err)
 			return
 		}
 
-		if err := r.Patch(ctx, parsedValue, resource); err != nil {
+		if err := r.Patch(ctx, primaryFieldValue, resource); err != nil {
 			r.sendError(ctx, err)
 			return
 		}
