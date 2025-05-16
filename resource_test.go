@@ -32,7 +32,7 @@ type Test struct {
 }
 
 type user struct {
-	ID                     int64     `json:"id"`
+	ID                     uint      `json:"id" gorm:"primaryKey"`
 	Name                   string    `json:"name"`
 	Organization           string    `json:"organization"`
 	Role                   string    `json:"role"`
