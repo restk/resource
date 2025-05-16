@@ -962,7 +962,6 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 		}
 
 		tx := r.tx(ctx)
-
 		whereClause, whereArgs, err := r.buildResourceWhereClause(ctx, resourceTypeForDoc)
 		if err != nil {
 			return
@@ -984,42 +983,26 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 			return
 		}
 
-		for _, beforeDeleteFunc := range r.beforeDelete {
-			if err = beforeDeleteFunc(ctx, resource); err != nil {
-				var userError *UserError
-				if errors.As(err, &userError) {
-					CustomUserError(ctx, userError)
-					return
-				}
-				InternalServerError(ctx, err)
-				return
-			}
-		}
-
-		var deletedResource *T
-		if err = tx.Model(r.table).Where(whereClause, whereArgs...).Delete(&deletedResource).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ResourceNotFound(ctx)
-				return
-			}
-			InternalServerError(ctx, err)
+		param := ctx.Param(r.PrimaryFieldURLParam())
+		_, primaryFieldValue, err := parseFieldFromParam(r.tx(ctx), param, resourceTypeForDoc, r.primaryField)
+		if err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
-		for _, afterDeleteFunc := range r.afterDelete {
-			if err = afterDeleteFunc(ctx, resource); err != nil {
-				var userError *UserError
-				if errors.As(err, &userError) {
-					CustomUserError(ctx, userError)
-					return
-				}
-				InternalServerError(ctx, err)
-				return
-			}
+		if err := r.Delete(ctx, primaryFieldValue); err != nil {
+			r.sendError(ctx, err)
+			return
+
 		}
 
 		r.sendResponse(ctx, resource, access.PermissionDelete)
 	})
+}
+
+// List returns a list of resources by a set of filters.
+func (r *Resource[T]) List(ctx context.Context, filters map[string]any) ([]*T, error) {
+	panic("not implemented")
 }
 
 func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
@@ -1161,6 +1144,34 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 
 		ctx.WriteJSON(http.StatusOK, resources)
 	})
+}
+
+// Get returns the resource by the primary id.
+func (r *Resource[T]) Get(ctx context.Context, primaryId any) (*T, error) {
+	// TODO: this code is duplicated and not called by the .GET() REST method, can we eventually unify this?
+	whereClause := fmt.Sprintf("%v = ?", r.primaryField)
+	whereArgs := []any{primaryId}
+
+	tx := r.tx(ctx)
+	table := tx.Model(r.table)
+	r.omitIgnoredFields(ctx, access.PermissionRead, table)
+
+	query := table.Where(whereClause, whereArgs...)
+	if len(r.preload) > 0 {
+		for _, preload := range r.preload {
+			query.Preload(preload)
+		}
+	}
+
+	var resource T
+	if err := query.First(&resource).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrRecordNotFound
+		}
+		return nil, err
+	}
+
+	return &resource, nil
 }
 
 func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
@@ -1432,8 +1443,15 @@ func (r *Resource[T]) runAfterSaveHooks(ctx context.Context, resource *T, permis
 
 // buildResourceWhereClause constructs the SQL WHERE clause for resource operations.
 func (r *Resource[T]) buildResourceWhereClause(ctx router.Context, resourceTypeForDoc *T) (string, []any, error) {
+	primaryParam := ctx.Param(r.PrimaryFieldURLParam())
+	_, primaryFieldValue, err := parseFieldFromParam(r.tx(ctx), primaryParam, resourceTypeForDoc, r.primaryField)
+	if err != nil {
+		InternalServerError(ctx, err)
+		return "", nil, err
+	}
+
 	whereClause := fmt.Sprintf("%v = ?", r.primaryField)
-	whereArgs := []any{ctx.Param(r.PrimaryFieldURLParam())}
+	whereArgs := []any{primaryFieldValue}
 
 	if r.belongsTo != nil {
 		param := ctx.Param(r.belongsTo.PrimaryFieldURLParam())
