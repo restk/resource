@@ -247,7 +247,7 @@ The list endpoint such as `GET /users` has query params for filtering, you can u
 
 ### Operation suffix
 
-For any query param, you can add an operation suffix to change the operator, for example, you could do `GET /users?nameLike=%tom%&ageGte?21` you can also do ranges such as `/users?createdAtGte=?&createdAtLte=?`
+For any query param, you can add an operation suffix to change the operator, for example, you could do `GET /users?nameLike=%tom%&ageGte=21` you can also do ranges such as `/users?createdAtGte=?&createdAtLte=?`
 
 | Suffix    | SQL Operator | Description                       |
 |--------|--------------|-----------------------------------|
@@ -280,7 +280,10 @@ function UserList() {
     let users = list.data || [];
 
     useEffect(() => {
-      list.fetch({})
+      list.fetch({
+          ageGte: 21,
+          nameLike: "%a%"          
+      })
     }, [list.page]);
 
     if (list.loading) {
