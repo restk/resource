@@ -1,9 +1,19 @@
 package router
 
 import (
+	"context"
 	"net/http"
 	"time"
 )
+
+// Ctx returns a router.Context from a regular standard context.Context by typecasting it
+func Ctx(ctx context.Context) Context {
+	if resourceCtx, ok := ctx.(Context); ok {
+		return resourceCtx
+	}
+
+	panic("the context passed is not a resource router.Context")
+}
 
 type (
 	Context interface {

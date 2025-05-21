@@ -1138,7 +1138,6 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 		table = table.Offset(offset).Limit(limit)
 
 		var ids []any
-
 		// If ACL is enabled for this resource, restrict the returned results to the resources we have access to.
 		if r.acl != nil {
 			ids = r.acl.GetIDsWithReadPermission(ctx, permissionName)
