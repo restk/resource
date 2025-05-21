@@ -34,6 +34,8 @@ var (
 	FieldQueryOperationLessThan          FieldQueryOperation = "<"
 	FieldQueryOperationLessThanEquals    FieldQueryOperation = "<="
 	FieldQueryOperationNotEqual          FieldQueryOperation = "!="
+
+	ErrRecordNotFound = errors.New("record not found")
 )
 
 var querySuffixToOperator = map[string]FieldQueryOperation{
@@ -168,16 +170,17 @@ type Resource[T any] struct {
 	// Fields.
 	fields                    []*Field
 	queryOperatorByField      map[string]FieldQueryOperation
+	queryParamByAlias         map[string]string
 	columnByField             map[string]string
 	fieldByJSON               map[string]string
 	ignoredFieldsByPermission map[access.Permission]map[string]*FieldIgnoreRule
 
 	// Hooks.
-	beforeSave     map[access.Permission][]func(c router.Context, obj *T) error
-	afterSave      map[access.Permission][]func(c router.Context, obj *T) error
-	beforeDelete   []func(c router.Context, obj *T) error
-	afterDelete    []func(c router.Context, obj *T) error
-	beforeResponse map[access.Permission]func(c router.Context, obj *T) (any, error)
+	beforeSave     map[access.Permission][]func(ctx context.Context, obj *T) error
+	afterSave      map[access.Permission][]func(ctx context.Context, obj *T) error
+	beforeDelete   []func(ctx context.Context, obj *T) error
+	afterDelete    []func(ctx context.Context, obj *T) error
+	beforeResponse map[access.Permission]func(ctx context.Context, obj *T) (any, error)
 
 	// Pagination.
 	maxPageSize int
@@ -230,12 +233,13 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		tags:                      []string{caser.String(pluralizedName)},
 		generateDocs:              true,
 		hasOwnership:              DefaultHasOwnership[T],
-		beforeSave:                make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
-		afterSave:                 make(map[access.Permission][]func(c router.Context, obj *T) error, 0),
-		beforeDelete:              make([]func(c router.Context, obj *T) error, 0),
-		afterDelete:               make([]func(c router.Context, obj *T) error, 0),
-		beforeResponse:            make(map[access.Permission]func(c router.Context, obj *T) (any, error), 0),
+		beforeSave:                make(map[access.Permission][]func(ctx context.Context, obj *T) error, 0),
+		afterSave:                 make(map[access.Permission][]func(ctx context.Context, obj *T) error, 0),
+		beforeDelete:              make([]func(ctx context.Context, obj *T) error, 0),
+		afterDelete:               make([]func(ctx context.Context, obj *T) error, 0),
+		beforeResponse:            make(map[access.Permission]func(ctx context.Context, obj *T) (any, error), 0),
 		queryOperatorByField:      make(map[string]FieldQueryOperation, 0),
+		queryParamByAlias:         make(map[string]string, 0),
 		columnByField:             make(map[string]string, 0),
 		preload:                   make([]string, 0),
 		fields:                    make([]*Field, 0),
@@ -406,17 +410,17 @@ func (r *Resource[T]) Preload(association ...string) {
 }
 
 // BeforeSave adds a function that will be called before a save of a Resource. You can add multiple functions.
-func (r *Resource[T]) BeforeSave(permission access.Permission, f func(c router.Context, obj *T) error) {
+func (r *Resource[T]) BeforeSave(permission access.Permission, f func(ctx context.Context, obj *T) error) {
 	if _, ok := r.beforeSave[permission]; !ok {
-		r.beforeSave[permission] = make([]func(c router.Context, obj *T) error, 0)
+		r.beforeSave[permission] = make([]func(ctx context.Context, obj *T) error, 0)
 	}
 	r.beforeSave[permission] = append(r.beforeSave[permission], f)
 }
 
 // AfterSave is called after the resource is saved to the database successfully. You can add multiple functions.
-func (r *Resource[T]) AfterSave(permission access.Permission, f func(c router.Context, obj *T) error) {
+func (r *Resource[T]) AfterSave(permission access.Permission, f func(ctx context.Context, obj *T) error) {
 	if _, ok := r.afterSave[permission]; !ok {
-		r.afterSave[permission] = make([]func(c router.Context, obj *T) error, 0)
+		r.afterSave[permission] = make([]func(ctx context.Context, obj *T) error, 0)
 	}
 
 	r.afterSave[permission] = append(r.afterSave[permission], f)
@@ -424,25 +428,37 @@ func (r *Resource[T]) AfterSave(permission access.Permission, f func(c router.Co
 
 // BeforeResponse is called right before we respond to the client and allows you to return a custom response instead
 // of the default response.
-func (r *Resource[T]) BeforeResponse(permission access.Permission, f func(c router.Context, obj *T) (any, error)) {
+func (r *Resource[T]) BeforeResponse(permission access.Permission, f func(ctx context.Context, obj *T) (any, error)) {
 	r.beforeResponse[permission] = f
 }
 
 // BeforeDelete is called right before a resource is deleted.
-func (r *Resource[T]) BeforeDelete(f func(c router.Context, obj *T) error) {
+func (r *Resource[T]) BeforeDelete(f func(ctx context.Context, obj *T) error) {
 	r.beforeDelete = append(r.beforeDelete, f)
 }
 
 // AfterDelete is called after a resource is deleted successfully.
-func (r *Resource[T]) AfterDelete(f func(c router.Context, obj *T) error) {
+func (r *Resource[T]) AfterDelete(f func(ctx context.Context, obj *T) error) {
 	r.afterDelete = append(r.afterDelete, f)
 }
 
-// SetFieldQueryOperation
+// SetFieldQueryOperation sets the query operation for a field
 //
 // Resource[schema.User].SetFieldQueryOperation("EndTime", FieldOperationLessThanEqual).
 func (r *Resource[T]) SetFieldQueryOperation(field string, op FieldQueryOperation) {
 	r.queryOperatorByField[field] = op
+}
+
+// SetQueryParamAlias sets a specific query param as an alias
+//
+// Example:
+//
+//	queryParam: dateGte
+//	alias: from
+//
+// Passing from="2021-12-24 15:04:05" will do a dateGte="2021-12-24 15:04:05"
+func (r *Resource[T]) SetQueryParamAlias(queryParam string, alias string) {
+	r.queryParamByAlias[alias] = queryParam
 }
 
 // DefaultHasOwnership returns true by default and does not handle ownership. Call SetHasOwnership() to add ownership.
@@ -656,7 +672,7 @@ func (r *Resource[T]) TXContextKey(txKey string) {
 }
 
 // tx returns a transaction from the resource or panics.
-func (r *Resource[T]) tx(ctx router.Context) *gorm.DB {
+func (r *Resource[T]) tx(ctx context.Context) *gorm.DB {
 	// TODO: when implementing the generic model interface, we should have ways for the user to determine where the tx
 	// comes from instead of hard pulling it from the context.
 	val := ctx.Value(r.txContextKey)
@@ -840,6 +856,33 @@ func (r *Resource[T]) GenerateRestAPI(routes router.Router, db *gorm.DB, openAPI
 	return nil
 }
 
+// Create creates a resource.
+func (r *Resource[T]) Create(ctx context.Context, resource *T) error {
+	if err := r.runBeforeSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
+		return err
+	}
+
+	tx := r.tx(ctx)
+	table := tx.Model(resource)
+	r.omitIgnoredFields(ctx, access.PermissionCreate, table)
+
+	if result := table.Create(&resource); result.Error != nil {
+		return result.Error
+	}
+
+	if r.acl != nil {
+		if err := r.acl.GrantPermissions(ctx, r.name, r.getID(resource), r.aclGrantPermissions); err != nil {
+			return err
+		}
+	}
+
+	if err := r.runAfterSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path)
 
@@ -866,32 +909,49 @@ func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath str
 			return
 		}
 
-		if err = r.runBeforeSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
-			return
-		}
-
-		tx := r.tx(ctx)
-		table := tx.Model(r.table)
-		r.omitIgnoredFields(ctx, access.PermissionCreate, table)
-
-		if result := table.Create(&resource); result.Error != nil {
-			InternalServerError(ctx, result.Error)
-			return
-		}
-
-		if r.acl != nil {
-			if err = r.acl.GrantPermissions(ctx, r.name, r.getID(resource), r.aclGrantPermissions); err != nil {
-				InternalServerError(ctx, err)
-				return
-			}
-		}
-
-		if err = r.runAfterSaveHooks(ctx, resource, access.PermissionCreate); err != nil {
+		if err := r.Create(ctx, resource); err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
 		r.sendResponse(ctx, resource, access.PermissionCreate)
 	})
+}
+
+// Delete deletes a resource by id
+func (r *Resource[T]) Delete(ctx context.Context, primaryId any) error {
+	whereClause := fmt.Sprintf("%v = ?", r.primaryField)
+	whereArgs := []any{primaryId}
+	tx := r.tx(ctx)
+
+	var resource *T
+	if result := tx.Model(r.table).Where(whereClause, whereArgs...).First(&resource); result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return ErrRecordNotFound
+		}
+		return result.Error
+	}
+
+	for _, beforeDeleteFunc := range r.beforeDelete {
+		if err := beforeDeleteFunc(ctx, resource); err != nil {
+			return err
+		}
+	}
+
+	var deletedResource *T
+	if err := tx.Model(r.table).Where(whereClause, whereArgs...).Delete(&deletedResource).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrRecordNotFound
+		}
+	}
+
+	for _, afterDeleteFunc := range r.afterDelete {
+		if err := afterDeleteFunc(ctx, resource); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
@@ -916,7 +976,6 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 		}
 
 		tx := r.tx(ctx)
-
 		whereClause, whereArgs, err := r.buildResourceWhereClause(ctx, resourceTypeForDoc)
 		if err != nil {
 			return
@@ -938,38 +997,17 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 			return
 		}
 
-		for _, beforeDeleteFunc := range r.beforeDelete {
-			if err = beforeDeleteFunc(ctx, resource); err != nil {
-				var userError *UserError
-				if errors.As(err, &userError) {
-					CustomUserError(ctx, userError)
-					return
-				}
-				InternalServerError(ctx, err)
-				return
-			}
-		}
-
-		var deletedResource *T
-		if err = tx.Model(r.table).Where(whereClause, whereArgs...).Delete(&deletedResource).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				ResourceNotFound(ctx)
-				return
-			}
-			InternalServerError(ctx, err)
+		param := ctx.Param(r.PrimaryFieldURLParam())
+		_, primaryFieldValue, err := parseFieldFromParam(r.tx(ctx), param, resourceTypeForDoc, r.primaryField)
+		if err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
-		for _, afterDeleteFunc := range r.afterDelete {
-			if err = afterDeleteFunc(ctx, resource); err != nil {
-				var userError *UserError
-				if errors.As(err, &userError) {
-					CustomUserError(ctx, userError)
-					return
-				}
-				InternalServerError(ctx, err)
-				return
-			}
+		if err := r.Delete(ctx, primaryFieldValue); err != nil {
+			r.sendError(ctx, err)
+			return
+
 		}
 
 		r.sendResponse(ctx, resource, access.PermissionDelete)
@@ -1051,7 +1089,15 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 				continue
 			}
 
-			paramToLookup := param
+			var paramToLookup string
+
+			// we check queryParamByAlias to see if we have an alias for this param (see SetQueryParamAlias)
+			if queryParam, ok := r.queryParamByAlias[param]; ok {
+				paramToLookup = queryParam
+			} else {
+				paramToLookup = param
+			}
+
 			paramSuffix := ""
 			for suffix := range querySuffixToOperator {
 				if strings.HasSuffix(param, suffix) {
@@ -1115,6 +1161,34 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 
 		ctx.WriteJSON(http.StatusOK, resources)
 	})
+}
+
+// Get returns the resource by the primary id.
+func (r *Resource[T]) Get(ctx context.Context, primaryId any) (*T, error) {
+	// TODO: this code is duplicated and not called by the .GET() REST method, can we eventually unify this?
+	whereClause := fmt.Sprintf("%v = ?", r.primaryField)
+	whereArgs := []any{primaryId}
+
+	tx := r.tx(ctx)
+	table := tx.Model(r.table)
+	r.omitIgnoredFields(ctx, access.PermissionRead, table)
+
+	query := table.Where(whereClause, whereArgs...)
+	if len(r.preload) > 0 {
+		for _, preload := range r.preload {
+			query.Preload(preload)
+		}
+	}
+
+	var resource T
+	if err := query.First(&resource).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrRecordNotFound
+		}
+		return nil, err
+	}
+
+	return &resource, nil
 }
 
 func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
@@ -1181,6 +1255,29 @@ func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath strin
 	})
 }
 
+func (r *Resource[T]) Update(ctx context.Context, primaryId any, resource *T) error {
+	whereClause := fmt.Sprintf("%v = ?", r.primaryField)
+	whereArgs := []any{primaryId}
+
+	if err := r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		return err
+	}
+
+	tx := r.tx(ctx)
+	table := tx.Model(resource)
+	r.omitIgnoredFields(ctx, access.PermissionUpdate, table)
+
+	if result := table.Where(whereClause, whereArgs).Save(resource); result.Error != nil {
+		return result.Error
+	}
+
+	if err := r.runAfterSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path, "{"+r.PrimaryFieldURLParam()+"}")
 
@@ -1213,30 +1310,43 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 			return
 		}
 
-		if err = r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
-			return
-		}
-
-		tx := r.tx(ctx)
-		whereClause, whereArgs, err := r.buildResourceWhereClause(ctx, resourceTypeForDoc)
+		param := ctx.Param(r.PrimaryFieldURLParam())
+		_, primaryFieldValue, err := parseFieldFromParam(r.tx(ctx), param, resourceTypeForDoc, r.primaryField)
 		if err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
-		table := tx.Model(r.table)
-		r.omitIgnoredFields(ctx, access.PermissionUpdate, table)
-
-		if result := table.Where(whereClause, whereArgs...).Save(&resource); result.Error != nil {
-			InternalServerError(ctx, result.Error)
-			return
-		}
-
-		if err = r.runAfterSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		if err := r.Update(ctx, primaryFieldValue, resource); err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
 		r.sendResponse(ctx, resource, access.PermissionUpdate)
 	})
+}
+
+func (r *Resource[T]) Patch(ctx context.Context, primaryId any, resource *T) error {
+	whereClause := fmt.Sprintf("%v = ?", r.primaryField)
+	whereArgs := []any{primaryId}
+
+	if err := r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		return err
+	}
+
+	tx := r.tx(ctx)
+	table := tx.Model(resource)
+	r.omitIgnoredFields(ctx, access.PermissionUpdate, table)
+
+	if result := table.Where(whereClause, whereArgs).Updates(resource); result.Error != nil {
+		return result.Error
+	}
+
+	if err := r.runAfterSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
@@ -1271,25 +1381,15 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 			return
 		}
 
-		if err = r.runBeforeSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
-			return
-		}
-
-		whereClause, whereArgs, err := r.buildResourceWhereClause(ctx, resourceTypeForDoc)
+		param := ctx.Param(r.PrimaryFieldURLParam())
+		_, primaryFieldValue, err := parseFieldFromParam(r.tx(ctx), param, resourceTypeForDoc, r.primaryField)
 		if err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
-		tx := r.tx(ctx)
-		table := tx.Model(r.table)
-		r.omitIgnoredFields(ctx, access.PermissionUpdate, table)
-
-		if result := table.Where(whereClause, whereArgs...).Updates(&resource); result.Error != nil {
-			InternalServerError(ctx, result.Error)
-			return
-		}
-
-		if err = r.runAfterSaveHooks(ctx, resource, access.PermissionUpdate); err != nil {
+		if err := r.Patch(ctx, primaryFieldValue, resource); err != nil {
+			r.sendError(ctx, err)
 			return
 		}
 
@@ -1335,17 +1435,10 @@ func (r *Resource[T]) parseAndValidateRequestBody(ctx router.Context) (*T, error
 }
 
 // runBeforeSaveHooks executes all registered before-save hooks.
-func (r *Resource[T]) runBeforeSaveHooks(ctx router.Context, resource *T, permission access.Permission) error {
+func (r *Resource[T]) runBeforeSaveHooks(ctx context.Context, resource *T, permission access.Permission) error {
 	if hooks, ok := r.beforeSave[permission]; ok {
 		for _, hook := range hooks {
 			if err := hook(ctx, resource); err != nil {
-				var userError *UserError
-				if errors.As(err, &userError) {
-					CustomUserError(ctx, userError)
-					return err
-				}
-
-				InternalServerError(ctx, err)
 				return err
 			}
 		}
@@ -1354,17 +1447,10 @@ func (r *Resource[T]) runBeforeSaveHooks(ctx router.Context, resource *T, permis
 }
 
 // runAfterSaveHooks executes all registered after-save hooks.
-func (r *Resource[T]) runAfterSaveHooks(ctx router.Context, resource *T, permission access.Permission) error {
+func (r *Resource[T]) runAfterSaveHooks(ctx context.Context, resource *T, permission access.Permission) error {
 	if hooks, ok := r.afterSave[permission]; ok {
 		for _, hook := range hooks {
 			if err := hook(ctx, resource); err != nil {
-				var userError *UserError
-				if errors.As(err, &userError) {
-					CustomUserError(ctx, userError)
-					return err
-				}
-
-				InternalServerError(ctx, err)
 				return err
 			}
 		}
@@ -1374,8 +1460,15 @@ func (r *Resource[T]) runAfterSaveHooks(ctx router.Context, resource *T, permiss
 
 // buildResourceWhereClause constructs the SQL WHERE clause for resource operations.
 func (r *Resource[T]) buildResourceWhereClause(ctx router.Context, resourceTypeForDoc *T) (string, []any, error) {
+	primaryParam := ctx.Param(r.PrimaryFieldURLParam())
+	_, primaryFieldValue, err := parseFieldFromParam(r.tx(ctx), primaryParam, resourceTypeForDoc, r.primaryField)
+	if err != nil {
+		InternalServerError(ctx, err)
+		return "", nil, err
+	}
+
 	whereClause := fmt.Sprintf("%v = ?", r.primaryField)
-	whereArgs := []any{ctx.Param(r.PrimaryFieldURLParam())}
+	whereArgs := []any{primaryFieldValue}
 
 	if r.belongsTo != nil {
 		param := ctx.Param(r.belongsTo.PrimaryFieldURLParam())
@@ -1439,6 +1532,16 @@ func (r *Resource[T]) getPaginationParams(queryParams router.QueryParams) (int, 
 	}
 
 	return limit, offset, nil
+}
+
+// sendError sends an error
+func (r *Resource[T]) sendError(ctx router.Context, err error) {
+	var userError *UserError
+	if errors.As(err, &userError) {
+		CustomUserError(ctx, userError)
+		return
+	}
+	InternalServerError(ctx, err)
 }
 
 // sendResponse prepares and sends the API response.
