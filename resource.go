@@ -170,6 +170,7 @@ type Resource[T any] struct {
 	// Fields.
 	fields                    []*Field
 	queryOperatorByField      map[string]FieldQueryOperation
+	queryParamByAlias         map[string]string
 	columnByField             map[string]string
 	fieldByJSON               map[string]string
 	ignoredFieldsByPermission map[access.Permission]map[string]*FieldIgnoreRule
@@ -238,6 +239,7 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		afterDelete:               make([]func(ctx context.Context, obj *T) error, 0),
 		beforeResponse:            make(map[access.Permission]func(ctx context.Context, obj *T) (any, error), 0),
 		queryOperatorByField:      make(map[string]FieldQueryOperation, 0),
+		queryParamByAlias:         make(map[string]string, 0),
 		columnByField:             make(map[string]string, 0),
 		preload:                   make([]string, 0),
 		fields:                    make([]*Field, 0),
@@ -440,11 +442,23 @@ func (r *Resource[T]) AfterDelete(f func(ctx context.Context, obj *T) error) {
 	r.afterDelete = append(r.afterDelete, f)
 }
 
-// SetFieldQueryOperation
+// SetFieldQueryOperation sets the query operation for a field
 //
 // Resource[schema.User].SetFieldQueryOperation("EndTime", FieldOperationLessThanEqual).
 func (r *Resource[T]) SetFieldQueryOperation(field string, op FieldQueryOperation) {
 	r.queryOperatorByField[field] = op
+}
+
+// SetQueryParamAlias sets a specific query param as an alias
+//
+// Example:
+//
+//	queryParam: dateGte
+//	alias: from
+//
+// Passing from="2021-12-24 15:04:05" will do a dateGte="2021-12-24 15:04:05"
+func (r *Resource[T]) SetQueryParamAlias(queryParam string, alias string) {
+	r.queryParamByAlias[alias] = queryParam
 }
 
 // DefaultHasOwnership returns true by default and does not handle ownership. Call SetHasOwnership() to add ownership.
@@ -1075,7 +1089,15 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 				continue
 			}
 
-			paramToLookup := param
+			var paramToLookup string
+
+			// we check queryParamByAlias to see if we have an alias for this param (see SetQueryParamAlias)
+			if queryParam, ok := r.queryParamByAlias[param]; ok {
+				paramToLookup = queryParam
+			} else {
+				paramToLookup = param
+			}
+
 			paramSuffix := ""
 			for suffix := range querySuffixToOperator {
 				if strings.HasSuffix(param, suffix) {
