@@ -1000,11 +1000,6 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 	})
 }
 
-// List returns a list of resources by a set of filters.
-func (r *Resource[T]) List(ctx context.Context, filters map[string]any) ([]*T, error) {
-	panic("not implemented")
-}
-
 func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path)
 
