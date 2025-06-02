@@ -210,8 +210,11 @@ type Resource[T any] struct {
 	disableDelete bool
 	disableList   bool
 
-	// Docs.
-	generateDocs bool
+	disableCreateDocs bool
+	disableReadDocs   bool
+	disableUpdateDocs bool
+	disableDeleteDocs bool
+	disableListDocs   bool
 
 	// Other.
 	maxInputBytes int64
@@ -231,7 +234,6 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		primaryField:              primaryField,
 		table:                     table,
 		tags:                      []string{caser.String(pluralizedName)},
-		generateDocs:              true,
 		hasOwnership:              DefaultHasOwnership[T],
 		beforeSave:                make(map[access.Permission][]func(ctx context.Context, obj *T) error, 0),
 		afterSave:                 make(map[access.Permission][]func(ctx context.Context, obj *T) error, 0),
@@ -298,11 +300,6 @@ func (r *Resource[T]) AddTag(tag string) {
 // Tags replaces all tags, see AddTag to add a single tag.
 func (r *Resource[T]) Tags(tags []string) {
 	r.tags = tags
-}
-
-// DisableDocs disables API doc generation for this specific resource.
-func (r *Resource[T]) DisableDocs() {
-	r.generateDocs = false
 }
 
 // PrimaryField returns the name of the primary field. The primary field is what is used for REST endpoints such as /users/:id (in this case, id, is the primary field).
@@ -753,9 +750,32 @@ func (r *Resource[T]) Disable(permissions []access.Permission) {
 	}
 }
 
+// DisableDocs disables API doc generation for a list of access methods.
+func (r *Resource[T]) DisableDocs(permissions []access.Permission) {
+	for _, permission := range permissions {
+		switch permission {
+		case access.PermissionCreate:
+			r.DisableCreateDocs()
+		case access.PermissionDelete:
+			r.DisableDeleteDocs()
+		case access.PermissionList:
+			r.DisableListDocs()
+		case access.PermissionRead:
+			r.DisableReadDocs()
+		case access.PermissionUpdate:
+			r.DisableUpdateDocs()
+		}
+	}
+}
+
 // DisableCreate disables creation on this resource.
 func (r *Resource[T]) DisableCreate() {
 	r.disableCreate = true
+}
+
+// DisableCreateDocs disables create doc generation
+func (r *Resource[T]) DisableCreateDocs() {
+	r.disableCreateDocs = true
 }
 
 // DisableDelete disables deletes on this resource.
@@ -763,9 +783,19 @@ func (r *Resource[T]) DisableDelete() {
 	r.disableDelete = true
 }
 
+// DisableDeleteDocs disables deletes docs on this resource.
+func (r *Resource[T]) DisableDeleteDocs() {
+	r.disableDeleteDocs = true
+}
+
 // DisableList disables listing on this resource.
 func (r *Resource[T]) DisableList() {
 	r.disableList = true
+}
+
+// DisableListDocs disables listing docs  on this resource.
+func (r *Resource[T]) DisableListDocs() {
+	r.disableListDocs = true
 }
 
 // DisableRead disables reads on this resource.
@@ -773,9 +803,24 @@ func (r *Resource[T]) DisableRead() {
 	r.disableRead = true
 }
 
+// disableReadDocs disables read docs on this resource.
+func (r *Resource[T]) DisableReadDocs() {
+	r.disableReadDocs = true
+}
+
 // DisableUpdate disables updates on this resource.
 func (r *Resource[T]) DisableUpdate() {
 	r.disableUpdate = true
+}
+
+// DisableUpdate disables updates on this resource.
+func (r *Resource[T]) DisableUpdateDocs() {
+	r.disableUpdateDocs = true
+}
+
+// DisableAllDocs disables all docs, see DisableDocs() and individual doc disabling such as DisableCreateDocs()
+func (r *Resource[T]) DisableAllDocs() {
+	r.DisableDocs(access.PermissionAll)
 }
 
 // IsValid validates that the value v is a valid resource.
@@ -886,7 +931,7 @@ func (r *Resource[T]) Create(ctx context.Context, resource *T) error {
 func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path)
 
-	if r.generateDocs {
+	if !r.disableCreateDocs {
 		createDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "create" + r.name,
 			Method:      http.MethodPost,
@@ -957,7 +1002,7 @@ func (r *Resource[T]) Delete(ctx context.Context, primaryId any) error {
 func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path, "{"+r.PrimaryFieldURLParam()+"}")
 
-	if r.generateDocs {
+	if !r.disableDeleteDocs {
 		deleteDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "delete" + r.name,
 			Method:      http.MethodDelete,
@@ -1017,7 +1062,7 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path)
 
-	if r.generateDocs {
+	if !r.disableListDocs {
 		listDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "list" + r.name,
 			Method:      http.MethodGet,
@@ -1193,7 +1238,7 @@ func (r *Resource[T]) Get(ctx context.Context, primaryId any) (*T, error) {
 func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path, "{"+r.PrimaryFieldURLParam()+"}")
 
-	if r.generateDocs {
+	if !r.disableReadDocs {
 		getDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "get" + r.name,
 			Method:      http.MethodGet,
@@ -1280,7 +1325,7 @@ func (r *Resource[T]) Update(ctx context.Context, primaryId any, resource *T) er
 func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path, "{"+r.PrimaryFieldURLParam()+"}")
 
-	if r.generateDocs {
+	if !r.disableUpdateDocs {
 		updateDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "update" + r.name,
 			Method:      http.MethodPut,
@@ -1351,7 +1396,7 @@ func (r *Resource[T]) Patch(ctx context.Context, primaryId any, resource *T) err
 func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPath string, permissionName string, resourceTypeForDoc *T, openAPI *openapi.Builder) {
 	routePath := path.Join(routes.BasePath(), groupPath, r.path, "{"+r.PrimaryFieldURLParam()+"}")
 
-	if r.generateDocs {
+	if !r.disableUpdateDocs {
 		patchDoc := openAPI.Register(&openapi.Operation{
 			OperationID: "patch" + r.name,
 			Method:      http.MethodPatch,
