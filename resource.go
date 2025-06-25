@@ -176,11 +176,12 @@ type Resource[T any] struct {
 	ignoredFieldsByPermission map[access.Permission]map[string]*FieldIgnoreRule
 
 	// Hooks.
-	beforeSave     map[access.Permission][]func(ctx context.Context, obj *T) error
-	afterSave      map[access.Permission][]func(ctx context.Context, obj *T) error
-	beforeDelete   []func(ctx context.Context, obj *T) error
-	afterDelete    []func(ctx context.Context, obj *T) error
-	beforeResponse map[access.Permission]func(ctx context.Context, obj *T) (any, error)
+	beforeSave         map[access.Permission][]func(ctx context.Context, obj *T) error
+	afterSave          map[access.Permission][]func(ctx context.Context, obj *T) error
+	beforeDelete       []func(ctx context.Context, obj *T) error
+	afterDelete        []func(ctx context.Context, obj *T) error
+	beforeResponse     map[access.Permission]func(ctx context.Context, obj *T) (any, error)
+	beforeListResponse func(ctx context.Context, obj []*T) (any, error)
 
 	// Pagination.
 	maxPageSize int
@@ -427,6 +428,12 @@ func (r *Resource[T]) AfterSave(permission access.Permission, f func(ctx context
 // of the default response.
 func (r *Resource[T]) BeforeResponse(permission access.Permission, f func(ctx context.Context, obj *T) (any, error)) {
 	r.beforeResponse[permission] = f
+}
+
+// BeforeListResponse is called right before we respond to the client and allows you to return a custom response instead
+// of the default response.
+func (r *Resource[T]) BeforeListResponse(permission access.Permission, f func(ctx context.Context, obj []*T) (any, error)) {
+	r.beforeListResponse = f
 }
 
 // BeforeDelete is called right before a resource is deleted.
@@ -1192,7 +1199,7 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 			}
 		}
 
-		var resources []T
+		var resources []*T
 		if err = table.Find(&resources, ids).Error; err != nil {
 			InternalServerError(ctx, err)
 			return
@@ -1200,6 +1207,16 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 
 		if len(resources) == 0 {
 			NoResults(ctx)
+			return
+		}
+
+		if r.beforeListResponse != nil {
+			response, err := r.beforeListResponse(ctx, resources)
+			if err != nil {
+				r.sendError(ctx, err)
+				return
+			}
+			ctx.WriteJSON(http.StatusOK, response)
 			return
 		}
 
@@ -1564,6 +1581,26 @@ func (r *Resource[T]) getPaginationParams(queryParams router.QueryParams) (int, 
 		}
 
 		offset, err = strconv.Atoi(queryParams.Get("offset"))
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid offset parameter: %w", err)
+		}
+
+		if limit > r.maxLimit {
+			limit = r.maxLimit
+		}
+
+		return limit, offset, nil
+	}
+
+	// Check for limit/start pagination. (TODO: remove this)
+	if queryParams.Has("limit") && queryParams.Has("start") {
+		var err error
+		limit, err = strconv.Atoi(queryParams.Get("limit"))
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid limit parameter: %w", err)
+		}
+
+		offset, err = strconv.Atoi(queryParams.Get("start"))
 		if err != nil {
 			return 0, 0, fmt.Errorf("invalid offset parameter: %w", err)
 		}
