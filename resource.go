@@ -862,9 +862,9 @@ func (r *Resource[T]) MaxInputBytes(maxInputBytes int64) {
 
 func valueOfType(t reflect.Type) any {
 	if t.Kind() == reflect.Ptr {
-		return reflect.New(t.Elem()).Interface()
+		t = t.Elem()
 	}
-	return reflect.New(t).Interface()
+	return reflect.New(t).Elem().Interface()
 }
 
 // GenerateRestAPI generates REST API endpoints for a resource. This also handles RBAC and makes sure the calling user
@@ -1126,12 +1126,7 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 			}
 
 			if prop, ok := r.schema.Properties[name]; ok {
-				t := field.StructField.Type
-				if t.Kind() == reflect.Ptr {
-					t = t.Elem()
-				}
-
-				listDoc.Request().QueryParam(name, valueOfType(t)).Description(prop.Description)
+				listDoc.Request().QueryParam(name, valueOfType(field.StructField.Type)).Description(prop.Description)
 			}
 
 			if r.beforeListResponse != nil {
