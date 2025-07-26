@@ -1126,7 +1126,12 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 			}
 
 			if prop, ok := r.schema.Properties[name]; ok {
-				listDoc.Request().QueryParam(name, valueOfType(field.StructField.Type)).Description(prop.Description)
+				t := field.StructField.Type
+				if t.Kind() == reflect.Ptr {
+					t = t.Elem()
+				}
+
+				listDoc.Request().QueryParam(name, valueOfType(t)).Description(prop.Description)
 			}
 
 			if r.beforeListResponse != nil {
