@@ -183,14 +183,17 @@ type Resource[T any] struct {
 	ignoredFieldsByPermission map[access.Permission]map[string]*FieldIgnoreRule
 
 	// Hooks.
-	beforeSave             map[access.Permission][]func(ctx context.Context, obj *T) error
-	afterSave              map[access.Permission][]func(ctx context.Context, obj *T) error
-	beforeDelete           []func(ctx context.Context, obj *T) error
-	afterDelete            []func(ctx context.Context, obj *T) error
-	beforeResponse         map[access.Permission]func(ctx context.Context, obj *T) (any, error)
-	beforeResponseType     any
-	beforeListResponse     func(ctx context.Context, obj []*T) (any, error)
-	beforeListResponseType any
+	beforeSave              map[access.Permission][]func(ctx context.Context, obj *T) error
+	afterSave               map[access.Permission][]func(ctx context.Context, obj *T) error
+	beforeDelete            []func(ctx context.Context, obj *T) error
+	afterDelete             []func(ctx context.Context, obj *T) error
+	beforeResponse          map[access.Permission]func(ctx context.Context, obj *T) (any, error)
+	beforeResponseType      map[access.Permission]any
+	beforeListResponse      func(ctx context.Context, obj []*T) (any, error)
+	beforeListResponseType  any
+	beforeRequest           map[access.Permission]func(ctx context.Context, requestType any) (*T, error)
+	beforeRequestType       map[access.Permission]reflect.Type
+	beforeRequestTypeSchema map[access.Permission]*openapi.Schema
 
 	// Pagination.
 	maxPageSize int
@@ -240,6 +243,10 @@ func NewResource[T any](name string, primaryField string) *Resource[T] {
 		beforeDelete:              make([]func(ctx context.Context, obj *T) error, 0),
 		afterDelete:               make([]func(ctx context.Context, obj *T) error, 0),
 		beforeResponse:            make(map[access.Permission]func(ctx context.Context, obj *T) (any, error), 0),
+		beforeResponseType:        map[access.Permission]any{},
+		beforeRequest:             make(map[access.Permission]func(ctx context.Context, requestType any) (*T, error), 0),
+		beforeRequestType:         make(map[access.Permission]reflect.Type, 0),
+		beforeRequestTypeSchema:   make(map[access.Permission]*openapi.Schema, 0),
 		queryOperatorByField:      make(map[string]FieldQueryOperation, 0),
 		queryParamByAlias:         make(map[string]string, 0),
 		columnByField:             make(map[string]string, 0),
@@ -451,7 +458,7 @@ func (r *Resource[T]) BeforeResponse(responseType any, permission access.Permiss
 	}
 
 	r.beforeResponse[permission] = f
-	r.beforeResponseType = responseType
+	r.beforeResponseType[permission] = responseType
 }
 
 // BeforeListResponse is called right before we respond to the client and allows you to return a custom response instead
@@ -847,10 +854,10 @@ func (r *Resource[T]) DisableAllDocs() {
 }
 
 // IsValid validates that the value v is a valid resource.
-func (r *Resource[T]) IsValid(v any) []error {
+func (r *Resource[T]) IsValid(v any, schema *openapi.Schema) []error {
 	pb := openapi.NewPathBuffer([]byte(""), 0)
 	res := &openapi.ValidateResult{}
-	openapi.Validate(SchemaRegistry, r.schema, pb, openapi.ModeWriteToServer, v, res)
+	openapi.Validate(SchemaRegistry, schema, pb, openapi.ModeWriteToServer, v, res)
 
 	return res.Errors
 }
@@ -961,14 +968,24 @@ func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath str
 			Description("Creates a new " + r.name + ". If the resource already exists, this returns an error.")
 
 		var resourceTypeForDoc *T
-		createDoc.Request().Body(resourceTypeForDoc)
 
-		if _, ok := r.beforeResponse[access.PermissionDelete]; ok {
-			createDoc.Response(http.StatusOK).Body(r.beforeResponseType)
+		if customRequestType, ok := r.beforeRequestType[access.PermissionCreate]; ok {
+			createDoc.Request().Body(valueOfType(customRequestType))
+		} else {
+			createDoc.Request().Body(resourceTypeForDoc)
+		}
+
+		if _, ok := r.beforeResponse[access.PermissionCreate]; ok {
+			createDoc.Response(http.StatusOK).Body(r.beforeResponseType[access.PermissionCreate])
 		} else {
 			createDoc.Response(http.StatusOK).Body(resourceTypeForDoc)
 		}
 
+	}
+
+	if r.post != nil {
+		routes.POST(routePath, r.post)
+		return
 	}
 
 	routes.POST(routePath, func(ctx router.Context) {
@@ -977,7 +994,7 @@ func (r *Resource[T]) generateCreateEndpoint(routes router.Router, groupPath str
 			return
 		}
 
-		resource, err := r.parseAndValidateRequestBody(ctx)
+		resource, err := r.parseAndValidateRequestBody(ctx, access.PermissionCreate)
 		if err != nil {
 			return
 		}
@@ -1046,11 +1063,16 @@ func (r *Resource[T]) generateDeleteEndpoint(routes router.Router, groupPath str
 		deleteDoc.Request().PathParam(r.PrimaryFieldURLParam(), r.name).Description("Primary ID of the " + r.name).Required(true)
 
 		if _, ok := r.beforeResponse[access.PermissionDelete]; ok {
-			deleteDoc.Response(http.StatusOK).Body(r.beforeResponseType)
+			deleteDoc.Response(http.StatusOK).Body(r.beforeResponseType[access.PermissionDelete])
 		} else {
 			deleteDoc.Response(http.StatusOK).Body(resourceTypeForDoc)
 		}
 
+	}
+
+	if r.delete != nil {
+		routes.DELETE(routePath, r.delete)
+		return
 	}
 
 	routes.DELETE(routePath, func(ctx router.Context) {
@@ -1135,6 +1157,11 @@ func (r *Resource[T]) generateListEndpoint(routes router.Router, groupPath strin
 				listDoc.Response(http.StatusOK).Body([]*T{})
 			}
 		}
+	}
+
+	if r.get != nil {
+		routes.GET(routePath, r.get)
+		return
 	}
 
 	routes.GET(routePath, func(ctx router.Context) {
@@ -1312,10 +1339,15 @@ func (r *Resource[T]) generateReadEndpoint(routes router.Router, groupPath strin
 		getDoc.Request().PathParam(r.PrimaryFieldURLParam(), r.name).Description("Primary ID of the " + r.name).Example("1").Required(true)
 
 		if _, ok := r.beforeResponse[access.PermissionRead]; ok {
-			getDoc.Response(http.StatusOK).Body(r.beforeResponseType)
+			getDoc.Response(http.StatusOK).Body(r.beforeResponseType[access.PermissionRead])
 		} else {
 			getDoc.Response(http.StatusOK).Body(resourceTypeForDoc)
 		}
+	}
+
+	if r.get != nil {
+		routes.GET(routePath, r.get)
+		return
 	}
 
 	routes.GET(routePath, func(ctx router.Context) {
@@ -1407,10 +1439,15 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 		updateDoc.Request().Body(resourceTypeForDoc)
 
 		if _, ok := r.beforeResponse[access.PermissionUpdate]; ok {
-			updateDoc.Response(http.StatusOK).Body(r.beforeResponseType)
+			updateDoc.Response(http.StatusOK).Body(r.beforeResponseType[access.PermissionUpdate])
 		} else {
 			updateDoc.Response(http.StatusOK).Body(resourceTypeForDoc)
 		}
+	}
+
+	if r.put != nil {
+		routes.PUT(routePath, r.put)
+		return
 	}
 
 	routes.PUT(routePath, func(ctx router.Context) {
@@ -1419,7 +1456,7 @@ func (r *Resource[T]) generateUpdateEndpoint(routes router.Router, groupPath str
 			return
 		}
 
-		resource, err := r.parseAndValidateRequestBody(ctx)
+		resource, err := r.parseAndValidateRequestBody(ctx, access.PermissionUpdate)
 		if err != nil {
 			return
 		}
@@ -1484,14 +1521,24 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 			Description("Patches a single " + r.name + ".")
 
 		patchDoc.Request().PathParam(r.PrimaryFieldURLParam(), r.name).Description("Primary ID of the " + r.name).Required(true)
-		patchDoc.Request().Body(resourceTypeForDoc)
+
+		if customRequestType, ok := r.beforeRequestType[access.PermissionUpdate]; ok {
+			patchDoc.Request().Body(valueOfType(customRequestType))
+		} else {
+			patchDoc.Request().Body(resourceTypeForDoc)
+		}
 
 		if _, ok := r.beforeResponse[access.PermissionUpdate]; ok {
-			patchDoc.Response(http.StatusOK).Body(r.beforeResponseType)
+			patchDoc.Response(http.StatusOK).Body(r.beforeResponseType[access.PermissionUpdate])
 		} else {
 			patchDoc.Response(http.StatusOK).Body(resourceTypeForDoc)
 		}
 
+	}
+
+	if r.patch != nil {
+		routes.PATCH(routePath, r.patch)
+		return
 	}
 
 	routes.PATCH(routePath, func(ctx router.Context) {
@@ -1500,7 +1547,7 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 			return
 		}
 
-		resource, err := r.parseAndValidateRequestBody(ctx)
+		resource, err := r.parseAndValidateRequestBody(ctx, access.PermissionUpdate)
 		if err != nil {
 			return
 		}
@@ -1526,14 +1573,71 @@ func (r *Resource[T]) generateUpdatePatchEndpoint(routes router.Router, groupPat
 	})
 }
 
+// BeforeRequest allows you to take in a custom request type for Creates and Updates. The request type must be transformed back to type T
+func (r *Resource[T]) BeforeRequest(requestType any, permission access.Permission, f func(ctx context.Context, requestType any) (*T, error)) {
+	if permission == access.PermissionList || permission == access.PermissionRead {
+		panic("BeforeRequest() only works for access.PermissionCreate and access.PermissionUpdate")
+	}
+
+	r.beforeRequest[permission] = f
+	r.beforeRequestType[permission] = reflect.TypeOf(requestType)
+	r.beforeRequestTypeSchema[permission] = openapi.SchemaFromType(SchemaRegistry, reflect.TypeOf(requestType))
+}
+
 // parseAndValidateRequestBody reads and validates the request body.
-func (r *Resource[T]) parseAndValidateRequestBody(ctx router.Context) (*T, error) {
+func (r *Resource[T]) parseAndValidateRequestBody(ctx router.Context, accessMethod access.Permission) (*T, error) {
 	defer ctx.Request().Body.Close()
 	lr := io.LimitReader(ctx.Request().Body, r.maxInputBytes)
 	body, err := io.ReadAll(lr)
 	if err != nil {
 		InternalServerError(ctx, err)
 		return nil, err
+	}
+
+	// check if we have have a beforeRequest handler
+	if f, ok := r.beforeRequest[accessMethod]; ok {
+		customRequestType, ok := r.beforeRequestType[accessMethod]
+		if !ok {
+			InternalServerError(ctx, err)
+			return nil, errors.New("custom request type could not be found")
+		}
+		customRequestTypeSchema, ok := r.beforeRequestTypeSchema[accessMethod]
+		if !ok {
+			InternalServerError(ctx, err)
+			return nil, errors.New("custom request type schema could not be found")
+		}
+
+		var customRequestTypeForValidation map[string]any
+		if err = json.Unmarshal(body, &customRequestTypeForValidation); err != nil {
+			InternalServerError(ctx, err)
+			return nil, err
+		}
+
+		errs := r.IsValid(customRequestTypeForValidation, customRequestTypeSchema)
+		if len(errs) > 0 {
+			var errStrings []string
+			for _, err := range errs {
+				errStrings = append(errStrings, err.Error())
+			}
+
+			InvalidInput(ctx, strings.Join(errStrings, ", \n"))
+			return nil, errors.New("invalid input")
+		}
+
+		var customRequest = reflect.New(customRequestType).Interface()
+		if err = json.Unmarshal(body, &customRequest); err != nil {
+			InternalServerError(ctx, err)
+			return nil, err
+		}
+
+		resourceFromCustomRequest, err := f(ctx, customRequest)
+		if err != nil {
+			return nil, err
+		}
+		body, err = json.Marshal(resourceFromCustomRequest)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// We double unmarshal here because openapi.Validate() only works with map[string]any for validation.
@@ -1543,7 +1647,7 @@ func (r *Resource[T]) parseAndValidateRequestBody(ctx router.Context) (*T, error
 		return nil, err
 	}
 
-	errs := r.IsValid(resourceForValidation)
+	errs := r.IsValid(resourceForValidation, r.schema)
 	if len(errs) > 0 {
 		var errStrings []string
 		for _, err := range errs {
